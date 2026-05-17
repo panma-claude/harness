@@ -1,0 +1,12 @@
+{
+  "name": "panma-harness",
+  "version": "0.0.1",
+  "description": "Multi-agent supervisor harness for Claude Code. Auto-dispatches role-based subagents (designer, executors, verifier, rule-applier) with Ralph loop, retry budget, and project-defined domain executors.",
+  "author": {
+    "name": "panma"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:panma-claude/harness.git"
+  }
+}
