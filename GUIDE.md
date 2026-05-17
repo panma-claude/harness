@@ -101,7 +101,7 @@ user request
   Complete (or retry up to 5 times if any phase fails)
 ```
 
-The full state machine — phases, retry budget, worker check-in heuristics, idempotency rules — lives in `skills/harness-orchestration/SKILL.md`.
+The full state machine — phases, retry budget, worker check-in heuristics, idempotency rules — lives in the body of `commands/harness-iterate.md` (internal command; not for direct user use).
 
 ---
 
@@ -280,7 +280,7 @@ Add a sentence to your request like "do it directly, no harness." The supervisor
 
 ### "Skill(loop) failed to enter dynamic mode when the supervisor tried to assistant-invoke it."
 
-This is the known fallback path. If you see Main complaining that `Skill(skill="loop", ...)` didn't behave like a user-invoked `/loop`, switch to the Stop-hook fallback: see the `harness-orchestration` skill's notes on the Stop-hook alternative (planned for a later plugin version). In the meantime, use `/loop /harness-iterate <request>` directly — it activates the harness through the same protocol but with user-side invocation.
+This is the known fallback path. If you see Main complaining that `Skill(skill="loop", ...)` didn't behave like a user-invoked `/loop`, use `/loop /harness-iterate <request>` directly — it activates the harness through the same protocol with user-side invocation, which is guaranteed to enter dynamic mode. A Stop-hook-driven fallback is on the roadmap for a later plugin version.
 
 ### "A worker has been running for a long time."
 
@@ -330,7 +330,7 @@ These are intentional non-goals. Listing them so expectations match reality:
 
 After `/plugin install`, the plugin lives at `~/.claude/plugins/marketplaces/panma/plugins/panma-harness/` (path may vary by Claude Code version). The relevant files inside:
 
-- **The orchestration protocol in full**: `skills/harness-orchestration/SKILL.md`.
+- **The orchestration protocol in full**: `commands/harness-iterate.md` (internal command body).
 - **Each universal role's contract**: `agents/<role>.md` (designer, generic-executor, verifier, rule-applier).
 - **The activation trigger text**: `CLAUDE-include.md`.
 - **YAML schema references**: `examples/*.example` and `examples/README.md`.

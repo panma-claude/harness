@@ -1,6 +1,6 @@
 {
   "name": "panma-harness",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Multi-agent supervisor harness for Claude Code. Auto-dispatches role-based subagents (designer, executors, verifier, rule-applier) with Ralph loop, retry budget, and project-defined domain executors.",
   "author": {
     "name": "panma"
@@ -13,8 +13,5 @@
     "orchestration",
     "harness"
   ],
-  "commands": "./commands/",
-  "skills": [
-    "./skills/harness-orchestration/"
-  ]
+  "commands": "./commands/"
 }

@@ -13,7 +13,7 @@ To activate, call:
 Skill(skill="loop", args="/harness-iterate <user request verbatim>")
 ```
 
-Once activated, follow the `harness-orchestration` skill. It governs the full cycle (Designer → Executors → Verifier → Rule-Applier), retry budget, worker check-in, and termination.
+`/harness-iterate` carries the full orchestration protocol (Designer → Executors → Verifier → Rule-Applier, retry budget, worker check-in, termination) in its body. Follow it.
 
 **Do NOT activate for:**
 

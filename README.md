@@ -36,8 +36,8 @@ That's it. Claude Code clones the plugin, registers its agents/commands/skills, 
 .
 ├── .claude-plugin/plugin.json            # plugin manifest
 ├── agents/                                # universal subagents (designer, generic-executor, verifier, rule-applier)
-├── commands/                              # /harness-start, /harness-status, /harness-stop, /harness-reset, /harness-iterate
-├── skills/harness-orchestration/SKILL.md  # the supervisor protocol
+├── commands/                              # /harness-start, /harness-status, /harness-stop, /harness-reset
+│                                           # plus /harness-iterate (internal — body carries the full supervisor protocol)
 ├── hooks/hooks.json                       # UserPromptSubmit trigger injection
 ├── hooks/inject-trigger.sh                # outputs CLAUDE-include.md content
 ├── CLAUDE-include.md                      # trigger conditions (read by the hook, never edited into project CLAUDE.md)
