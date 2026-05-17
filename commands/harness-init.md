@@ -55,27 +55,46 @@ Look for these signals — each suggests a `post-finish.md` entry:
 
 Don't propose finishers for tools you can't see installed. If `package.json` has no `prettier` in `devDependencies`, do not propose `prettier --write` — but if the signal table above is something you actively checked for and rejected, record it for the "Skipped checks" section in step 4 so the user sees what was evaluated.
 
-## 3b. Detect repo-registration candidacy (optional, niche)
+## 3b. Detect repo-registration candidacy
 
-Only propose `.harness/repo-registration.yaml` if **all** of these hold:
+Propose `.harness/repo-registration.yaml` if **any of (a), (b), (c)** holds, AND the universal gates pass.
 
-- The project is a monorepo (workspace manifest detected in step 1).
-- At least one of `apps/`, `services/`, `packages/`, `crates/` contains 2+ subdirectories that each look like an independent unit (own manifest file, own README, etc.).
-- `gh` CLI is available on PATH (check with `command -v gh`).
+**Universal gates** (must all hold for any pattern):
+- `gh` CLI on PATH (`command -v gh`).
 - `.harness/repo-registration.yaml` does **not** already exist.
 
-If candidacy holds, propose a **template** — you cannot auto-detect the org name or naming convention, so leave those as placeholders the user must fill in. Mark this clearly in the plan output:
+**Pattern (a) — workspace monorepo:**
+- A workspace manifest detected in step 1 (pnpm-workspace.yaml, turbo.json, nx.json, lerna.json, Cargo workspace, go.work, parent pom.xml, parent settings.gradle*).
+- At least one of `apps/`, `services/`, `packages/`, `crates/` contains 2+ subdirectories.
 
-```
-repo-registration.yaml — TEMPLATE (you must fill in placeholders before it activates)
-  default_org:    <your-github-org-or-user>
-  default_private: true
-  patterns:
-    - dir: "apps/*"      → repo_name: "{name}"
-    - dir: "packages/*"  → repo_name: "{name}"
-```
+**Pattern (b) — polyrepo / nested-clones umbrella:**
+- `find . -mindepth 2 -maxdepth 3 -name .git -type d` returns 2+ results.
+- This is the "super-repo with N nested git clones" pattern (panma-claude itself, or any project where each top-level subdir is a separate git repo cloned into one workspace).
 
-If candidacy does **not** hold, do **not** propose it — but record the reason and surface it in the final plan under "Skipped checks" (see step 4). The user should always be able to tell what was evaluated and why it was not proposed.
+**Pattern (c) — git submodules:**
+- `.gitmodules` exists at the project root with 2+ `[submodule ...]` sections.
+
+### Generating the template
+
+For pattern (a):
+- `patterns` mirror the workspace dirs (`apps/*`, `packages/*`, etc.).
+- `default_org` cannot be auto-detected → leave as placeholder.
+
+For pattern (b):
+- `patterns` mirror the **top-level dirs that contain nested clones**. E.g., if nested .gits are found under `backend/*` and `frontend/*`, emit patterns for both. Group by parent dir; do not list every leaf.
+- **Auto-extract `default_org`** from one of the nested clones' git remote:
+  ```
+  git -C <nested-clone-path> remote get-url origin
+  ```
+  Parse the org from URLs like `git@github.com:<org>/<repo>.git` or `https://github.com/<org>/<repo>.git`. If multiple nested clones share the same org, use it as `default_org`. If they differ, leave placeholder and note the conflict in "Skipped checks".
+
+For pattern (c):
+- `patterns` mirror each submodule's path (or group them by parent if there are many under one dir).
+- Auto-extract `default_org` from `.gitmodules` `url` entries the same way.
+
+### When no pattern matches
+
+Do **not** propose it. Record the reason and surface it under "Skipped checks" in step 4. The user should always be able to tell what was evaluated and why it was not proposed.
 
 ## 4. Present the plan to the user
 
@@ -112,12 +131,13 @@ Proposed post-finish.md rules (N):
   1. format       — shell: pnpm prettier --write, scope: changed-files-only
   2. eslint-fix   — shell: pnpm eslint --fix, scope: changed-files-only
 
-Proposed repo-registration.yaml (TEMPLATE — fill in before it activates):
-  default_org:      <your-github-org-or-user>
+Proposed repo-registration.yaml:
+  pattern detected: polyrepo / nested-clones (21 nested .git dirs under backend/*, frontend/*)
+  default_org:      panma-web        ← auto-extracted from existing nested clones
   default_private:  true
   patterns:
-    - apps/*      → "{name}"
-    - packages/*  → "{name}"
+    - backend/*   → "{name}"
+    - frontend/*  → "{name}"
 
 Proposed .gitignore additions:
   .harness/state.json
