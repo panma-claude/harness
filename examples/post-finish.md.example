@@ -1,0 +1,27 @@
+# panma-harness — Post-Finish Rules (example template)
+#
+# Read by rule-applier after the universal review/security-review skills run.
+# Each rule below is one of:
+#
+#   - kind: shell   — a deterministic shell command (formatter, --fix linter,
+#                     changelog updater, etc.). rule-applier runs it directly.
+#                     If `cmd` is destructive across many files, rule-applier
+#                     proposes before applying.
+#
+#   - kind: check   — a free-form check description. rule-applier reads the
+#                     diff and reports findings, but does NOT modify code.
+#
+# Any rule whose `name` appears in .harness/skip-rules.json is skipped silently.
+
+- name: <rule-name-1>
+  kind: shell
+  cmd: <your-formatter-or-linter-command>
+  scope: changed-files-only        # one of: changed-files-only | whole-tree | "<glob>"
+
+- name: <rule-name-2>
+  kind: check
+  description: <one-line check, e.g. "every new public function has a docstring">
+
+- name: <rule-name-3>
+  kind: shell
+  cmd: <your-changelog-update-command>

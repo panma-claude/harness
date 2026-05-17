@@ -1,0 +1,34 @@
+# panma-harness — Repo Registration Config (example template)
+#
+# When a harness cycle creates new top-level directories that are not yet
+# git repos, rule-applier reads this file to decide what to propose:
+#
+#   - Each candidate directory is matched first against `patterns` (glob).
+#   - Then against `overrides` (exact path). Overrides win.
+#   - rule-applier reports the derived (org, repo_name, description, private)
+#     to Main, which asks the user. Only on confirmation does rule-applier run
+#     `gh repo create ...` + git init / remote / push for each candidate.
+#
+# Edit every placeholder. Delete sections that do not apply.
+
+default_org: <your-github-org-or-user>
+default_private: true
+
+patterns:
+  # The {name} placeholder is the last segment of the matched directory.
+  # Example: a candidate at "<area-1>/foo" with the first pattern below yields
+  # repo_name = "foo-<suffix>", description = "foo <one-line role>".
+  - dir: "<area-1>/*"
+    repo_name: "{name}-<suffix>"
+    description: "{name} <one-line role>"
+
+  - dir: "<area-2>/*"
+    repo_name: "{name}"
+    description: "<one-line role>"
+
+overrides:
+  # Exact-path exceptions to the patterns above.
+  - dir: "<area-1>/<specific-subdir>"
+    repo_name: "<custom-name>"
+    description: "<one-line role>"
+    private: false
