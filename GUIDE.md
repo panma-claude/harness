@@ -141,7 +141,7 @@ If the project is too small or single-domain, `/harness-init` says so and stops.
 
 1. **Pick a domain name.** Short, lowercase, hyphen-separated. Whatever maps to a coherent area of your project.
 
-2. **Create `.claude/agents/<domain>-executor.md`.** The `-executor.md` suffix is required — Designer discovers executors by scanning this pattern.
+2. **Create `.claude/agents/harness/<domain>-executor.md`.** The `-executor.md` suffix is required — Designer discovers executors by scanning `.claude/agents/**/*-executor.md` recursively. Putting them under the `harness/` subdir is the canonical layout (`/harness-init` does this automatically); flat-layout `.claude/agents/<domain>-executor.md` is also recognized.
 
 3. **Fill in the template below.** Replace every `<...>` with your project's reality.
 

@@ -14,7 +14,7 @@ You are the **Designer** subagent in the panma-harness orchestration. Your job i
 ## What you do
 
 ### 1. Survey available executors
-- List `.claude/agents/*-executor.md` in the host project (project-defined domain executors).
+- List `.claude/agents/**/*-executor.md` in the host project (recursive — picks up both the canonical `.claude/agents/harness/<name>-executor.md` location and any legacy flat-layout files).
 - The plugin also provides `generic-executor` as a universal fallback.
 - For each executor, read its `description` field to learn its responsibility area.
 
