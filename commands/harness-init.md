@@ -96,6 +96,22 @@ For pattern (c):
 
 Do **not** propose it. Record the reason and surface it under "Skipped checks" in step 4. The user should always be able to tell what was evaluated and why it was not proposed.
 
+## 3c. Detect auto-commit candidacy (polyrepo only)
+
+If pattern (b) above (polyrepo / nested-clones) is detected, additionally offer a `nested-repo-commit` post-finish rule. This rule, when added, runs after every harness cycle and creates one commit per nested repo that has changes — using the cycle's `user_request` as the commit message (via `${CLAUDE_PLUGIN_ROOT}/hooks/commit-nested.sh`).
+
+Why this is useful: on umbrella projects, a single harness cycle often touches files spread across many nested repos. Without this rule, the user has to walk each repo and commit separately. With it, the cycle ends with N commits ready to push.
+
+Propose only when:
+- Pattern (b) matched.
+- The rule is **not** already present in `.harness/post-finish.md`.
+
+This is opt-in. Surface it as its own checkbox in the step 4 approval question (see below). Do not enable it silently.
+
+## 3d. Skip-rules.json (intentionally not proposed)
+
+`/harness-init` never proposes a `skip-rules.json`. It's a runtime toggle for "temporarily disable a rule," not a setup decision. Surface this in "Skipped checks" so the user knows it was considered.
+
 ## 4. Present the plan to the user
 
 Output a single, scannable block. Do **not** call any tools beyond Read/Glob/Bash for inspection at this point.
@@ -139,25 +155,38 @@ Proposed repo-registration.yaml:
     - backend/*   → "{name}"
     - frontend/*  → "{name}"
 
+Optional: auto-commit to nested repos (polyrepo-only feature)
+  Adds post-finish rule: nested-repo-commit
+    runs bash "${CLAUDE_PLUGIN_ROOT}/hooks/commit-nested.sh" after every cycle
+    creates one commit per nested repo that has changes
+    commit message derived from the cycle's user_request
+
 Proposed .gitignore additions:
   .harness/state.json
   .harness/STOP
   .harness/cycle-*.applied
+  .harness/skip-rules.json
 
 Skipped checks (evaluated but not proposed):
-  - repo-registration.yaml — not a monorepo (no apps/packages/services/crates dirs found)
+  - skip-rules.json — runtime toggle, not a setup file (create manually if needed)
   - post-finish: black/ruff — no Python config detected
 
 No changes have been written yet.
 ```
 
-Then ask the user one of:
+Then ask the user with **one `AskUserQuestion` call, `multiSelect: true`**. Each proposed section is an independent checkbox. The user picks any combination (or nothing).
 
-- **Approve all** — write everything as shown
-- **Edit** — call out which items to drop, rename, or merge
-- **Cancel** — write nothing
+Options to include (omit any section that has nothing to propose):
 
-Use `AskUserQuestion` for this. Offer at minimum: "Apply all", "Pick which to apply", "Cancel".
+- `Domain executors (N proposed)` — write all proposed `*-executor.md` files (existing ones are preserved either way)
+- `post-finish.md rules (N proposed)` — formatter / linter / check entries
+- `repo-registration.yaml` — only if section 3b matched
+- `Auto-commit to nested repos` — only if section 3c matched (polyrepo). Adds the `nested-repo-commit` rule to `post-finish.md` (creating the file if absent)
+- `.gitignore additions` — runtime state ignores
+
+After the user responds, anything left unchecked is **not written**. A response with zero checkboxes selected = full cancel.
+
+For finer per-item control (e.g. dropping one executor while keeping the others), the user follows up with a free-form message before you proceed — do not assume their selection is final without confirmation if their checked set is partial.
 
 ## 5. Apply (only after explicit confirmation)
 
@@ -173,8 +202,19 @@ For each approved finisher rule:
 For the approved repo-registration template (if any):
 
 - Write `.harness/repo-registration.yaml` only if the file does **not** exist. Never overwrite.
-- Write the template verbatim with placeholders intact (`<your-github-org-or-user>` etc.) — the user fills them in.
-- In the final report, note "repo-registration.yaml written as template — edit placeholders before next cycle."
+- Pre-fill `default_org` if you successfully auto-extracted it from existing nested remotes or `.gitmodules`; otherwise leave the placeholder for the user to fill in.
+- In the final report, note whether org was auto-filled ("ready to use") or left as placeholder ("edit before next cycle").
+
+For approved auto-commit rule (polyrepo only):
+
+- Append (or create) `.harness/post-finish.md` with a single rule:
+  ```yaml
+  - name: nested-repo-commit
+    kind: shell
+    cmd: bash "${CLAUDE_PLUGIN_ROOT}/hooks/commit-nested.sh"
+    scope: whole-tree
+  ```
+- Do not duplicate if a `nested-repo-commit` rule already exists in the file.
 
 For `.gitignore`:
 
@@ -268,7 +308,7 @@ If the user canceled at step 4, just say `harness-init canceled. No files were w
 
 - Re-running `/harness-init` must be safe.
 - Never overwrite an existing `<name>-executor.md`. Show it as "kept".
-- For `.harness/post-finish.md`: if the file exists, **append** new rules under a `# added by /harness-init` comment; never replace.
+- For `.harness/post-finish.md`: if the file exists, **append** new rules under a `# added by /harness-init` comment; never replace. For the `nested-repo-commit` rule specifically, also check by `name:` to avoid duplicates across re-runs.
 - For `.harness/repo-registration.yaml`: skip silently if the file exists. Never overwrite.
 - For `.gitignore`: only add lines that are not already present.
 
