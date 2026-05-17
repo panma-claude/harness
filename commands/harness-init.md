@@ -36,33 +36,17 @@ For monorepos, also peek one level deep into the workspace dirs (e.g. `apps/*/pa
 
 If the project looks too small to benefit (single file, no real domain split), say so plainly and stop — don't force executors onto a project that doesn't need them.
 
-## 2. Detect existing executors and classify other agents
+## 2. Detect existing agents in `.claude/agents/`
 
-### 2a. Existing executors
+### 2a. Managed executors
 List `.claude/agents/*-executor.md`. For each, read the `description` field. These are **not** candidates for re-generation — preserve them. New executors must not clash on name or path coverage.
 
-### 2b. Classify other agents (suspect-executor detection)
+### 2b. Other agents (not managed)
+List any `.md` files in `.claude/agents/` that do **not** match `*-executor.md`. Surface them in the plan as "Other agents (not managed by harness)" with a one-line reminder of the convention — that's the contract:
 
-List all `.md` files in `.claude/agents/` that do **not** match `*-executor.md`. For each, read the frontmatter `tools:` and `description:` and classify:
+> **The `*-executor.md` filename suffix is the marker for harness-managed executors.** Designer discovers via this glob. If you want any of the listed agents to be picked up by Designer, rename the file to add the `-executor` suffix yourself (`mv foo.md foo-executor.md`).
 
-| Class | Signal | Plan treatment |
-|---|---|---|
-| **suspected-executor** | `tools:` includes `Edit` OR `Write`, AND description mentions implement/build/edit/create/modify/refactor | Surface as candidate for rename; offer in plan |
-| **clearly-non-executor** | filename matches `*-reviewer.md` / `*-auditor.md` / `*-checker.md`, OR `tools:` is only `Read`/`Grep`/`Glob`, OR description mentions review/audit/check/analyze | Surface as "kept untouched", no rename offered |
-| **ambiguous** | neither signal fires clearly | Surface as "kept untouched" with a question mark — note that the user can rename manually if they want it managed |
-
-For each suspected-executor, derive a rename target by appending `-executor` before `.md`:
-
-```
-panma-infra-ops.md       → panma-infra-ops-executor.md
-panma-event-publisher.md → panma-event-publisher-executor.md
-```
-
-Do **not** touch the file's frontmatter `name:` field — that's the dispatch identifier and changing it may break anything that references the agent by name. Renaming the file is enough to make Designer's glob pick it up.
-
-In the final plan, two sections:
-- `Suspected executors (rename to enable harness dispatch)` — list each `old → new`.
-- `Detected non-executor agents (kept untouched)` — list clearly-non-executor and ambiguous agents.
+Do not classify, do not propose renames. The convention is the convention; users who want it managed know what to do.
 
 ## 3. Detect formatters / linters (optional finisher candidates)
 
@@ -193,12 +177,11 @@ Proposed post-finish.md rules (N):
   2. eslint-fix   — shell: pnpm eslint --fix, scope: changed-files-only
 
 Proposed repo-registration.yaml:
-  pattern detected: polyrepo / nested-clones (21 nested .git dirs under backend/*, frontend/*)
-  default_org:      panma-web        ← auto-extracted from existing nested clones
+  pattern detected: <which of the 3 patterns + how many candidate dirs>
+  default_org:      <auto-extracted-or-placeholder>
   default_private:  true
   patterns:
-    - backend/*   → "{name}"
-    - frontend/*  → "{name}"
+    - <parent-dir>/*  → "{name}"
 
 Optional: auto-commit to nested repos (polyrepo-only feature)
   Adds post-finish rule: nested-repo-commit
@@ -207,26 +190,20 @@ Optional: auto-commit to nested repos (polyrepo-only feature)
     commit message derived from the cycle's user_request
 
 Proposed verification-checks.yaml (runtime check library, Designer picks per cycle):
-  - id: ui-smoke
-      cmd: pnpm playwright test --grep @smoke
-      timeout: 300
-      applicable_when: changed apps/web/**, apps/api/**
-  - id: ui-full
-      cmd: pnpm playwright test
-      timeout: 1200
-      applicable_when: user_hint ["playwright", "e2e", "full check"]
-  - id: api-contract
-      cmd: pnpm test:api-contract
-      timeout: 60
-      applicable_when: changed apps/api/src/**
+  - id: <derived-from-detected-tooling>
+      cmd: <derived-command>
+      timeout: <seconds>
+      applicable_when: <derived-from-executor-outputs>
+  - id: <heavier-check-id>
+      cmd: <full-suite-command>
+      timeout: <seconds>
+      applicable_when: user_hint [<keywords>]
 
-Suspected executors (rename to enable harness dispatch):
-  - panma-infra-ops.md       → panma-infra-ops-executor.md
-  - panma-event-publisher.md → panma-event-publisher-executor.md
-
-Detected non-executor agents (kept untouched):
-  - panma-convention-reviewer  (read-only by tools/description)
-  - panma-permission-auditor   (read-only by tools/description)
+Other agents (not managed by harness):
+  - <name>
+  - <name>
+  (To make any of these managed by the harness, rename the file to add
+  the `-executor` suffix yourself: `mv <name>.md <name>-executor.md`.)
 
 Proposed .gitignore additions:
   .harness/state.json
@@ -246,7 +223,6 @@ Then ask the user with **one `AskUserQuestion` call, `multiSelect: true`**. Each
 Options to include (omit any section that has nothing to propose):
 
 - `Domain executors (N proposed)` — write all proposed `*-executor.md` files (existing ones are preserved either way)
-- `Rename suspected executors (N candidates)` — only if section 2b found suspected-executors. `git mv` each `<name>.md` → `<name>-executor.md` so Designer picks them up next cycle. Frontmatter is left untouched.
 - `post-finish.md rules (N proposed)` — formatter / linter / check entries
 - `repo-registration.yaml` — only if section 3b matched
 - `Auto-commit to nested repos` — only if section 3c matched (polyrepo). Adds the `nested-repo-commit` rule to `post-finish.md` (creating the file if absent)
@@ -263,12 +239,6 @@ For each approved executor:
 
 - Write `.claude/agents/<name>-executor.md` using the template below.
 - Fill `<paths>`, `<build-command>`, and any `<conventions>` lines from the detected info. If a field has no good default, leave it as `<...>` placeholder text so the user can edit later.
-
-For each approved rename of a suspected executor:
-
-- Run `git mv <old-path> <new-path>` to preserve file history. If the file isn't tracked by git, fall back to plain `mv`.
-- If a target path already exists (very unlikely — would mean both `foo.md` and `foo-executor.md` coexist), skip with a notes entry. Never overwrite.
-- Do **not** edit the file's frontmatter `name:` field. Designer discovers via filename glob but dispatches by frontmatter name — renaming the file is enough.
 
 For each approved finisher rule:
 
@@ -389,7 +359,6 @@ If the user canceled at step 4, just say `harness-init canceled. No files were w
 
 - Re-running `/harness-init` must be safe.
 - Never overwrite an existing `<name>-executor.md`. Show it as "kept".
-- For renames: never overwrite an existing target. If `<name>-executor.md` already exists, do not rename `<name>.md` onto it.
 - For `.harness/post-finish.md`: if the file exists, **append** new rules under a `# added by /harness-init` comment; never replace. For the `nested-repo-commit` rule specifically, also check by `name:` to avoid duplicates across re-runs.
 - For `.harness/repo-registration.yaml`: skip silently if the file exists. Never overwrite.
 - For `.harness/verification-checks.yaml`: skip silently if the file exists. Never overwrite.
