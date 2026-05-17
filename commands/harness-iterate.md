@@ -52,11 +52,14 @@ All persistent state lives in the host project's `.harness/` directory.
     }
   ],
   "pending_specs": [],
+  "verification_spec": [],
   "verifier_result": null,
   "rule_applier_result": null,
   "termination_reason": null
 }
 ```
+
+`verification_spec` is the list of check IDs the Designer picked for this cycle from `.harness/verification-checks.yaml` (if present). Verifier honors it during the `verifying` phase. Empty list means the Verifier runs only static checks.
 
 `termination_reason` is one of: `null`, `"success"`, `"user_stop"`, `"retry_limit"`, `"designer_escalation"`, `"error"`.
 
@@ -71,6 +74,10 @@ Project-local disable list for Rule-Applier rules. Honored by Rule-Applier direc
 ### `.harness/post-finish.md`, `.harness/repo-registration.yaml` (optional)
 
 Project-local extensions for Rule-Applier. Honored by Rule-Applier directly.
+
+### `.harness/verification-checks.yaml` (optional)
+
+Project-local library of runtime verification checks (api-contract, ui-smoke, playwright e2e, etc.). Read by Designer to pick per-cycle `verification_spec`, then executed by Verifier in its dynamic phase. Honored by Designer and Verifier directly.
 
 ---
 
@@ -114,9 +121,9 @@ On activation, before the first iteration:
 
 1. Dispatch the **designer** subagent (foreground Task, not background).
    - Input: current `user_request` + the most recent failure report (if `retry_count > 0`).
-2. Designer returns either a spec array or `{"escalate": true, "reason": "..."}`.
+2. Designer returns either a `{"executors": [...], "verification": [...]}` object or `{"escalate": true, "reason": "..."}`. Tolerate the legacy plain-array form by treating it as `{executors: <array>, verification: []}`.
 3. If escalate: set `phase: "needs_user"`, `termination_reason: "designer_escalation"`. Report to user. Do NOT call ScheduleWakeup.
-4. Else: store specs. Take the first `min(len(specs), 4)` into `active_workers` (concurrency cap = 4). Push the rest into `pending_specs`. Append the dispatch to `designer_history`.
+4. Else: store specs. Take the first `min(len(executors), 4)` into `active_workers` (concurrency cap = 4). Push the rest into `pending_specs`. Store the Designer's `verification` list into `verification_spec`. Append the dispatch to `designer_history`.
 5. Move to `phase: "executing"`. Continue same turn into the executing phase (no need to wait).
 
 ### Phase: `executing`
@@ -136,11 +143,11 @@ On activation, before the first iteration:
 ### Phase: `verifying`
 
 1. Dispatch the **verifier** subagent (foreground Task).
-   - Input: `completed_workers` reports + access to the working tree for diff reading.
-2. Verifier returns `{status: pass | fail, mismatches: [...], notes: ...}`.
+   - Input: `completed_workers` reports + access to the working tree + the current `verification_spec` (list of check IDs from Designer).
+2. Verifier returns `{status: pass | fail, mismatches: [...], dynamic_checks: [...], notes: ...}`.
 3. Store in `verifier_result`.
 4. If `status: pass` → move to `phase: "finalizing"`, continue same turn.
-5. If `status: fail` → run §6 (failure handling).
+5. If `status: fail` → run §6 (failure handling). The failure report passed back to Designer must include both `mismatches` and any failed `dynamic_checks` so it can decide whether to re-decompose, change the verification picks, or escalate.
 
 ### Phase: `finalizing`
 

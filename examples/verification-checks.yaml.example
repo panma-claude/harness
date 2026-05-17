@@ -1,0 +1,54 @@
+# panma-harness — Verification Checks Library (example template)
+#
+# Read by the Designer to pick a subset of checks for each cycle, then
+# executed by the Verifier in its dynamic phase.
+#
+# Designer's selection rule (per check):
+#   include if ANY of applicable_when[] matches:
+#     - user_hint: list of keywords; matches case-insensitively against
+#       the user_request
+#     - changed: list of glob patterns; matches if any executor's outputs
+#       (or inputs) intersect the globs
+#   if applicable_when is missing or empty → always include
+#
+# Verifier execution rule (per included check):
+#   - run `cmd` in `cwd` (default project root) with `timeout` (default 300)
+#   - record pass / fail / timeout / skipped + duration + last ~20 lines
+#   - overall verifier status = pass only when every dynamic check passes
+#     (skipped also counts as pass)
+#
+# Failed checks are reported back to Designer with the rest of the verifier
+# output, so the re-plan can decide whether to fix code, change the
+# verification picks, or escalate.
+
+checks:
+  # --- example: lightweight smoke test (always relevant when frontend changes)
+  - id: ui-smoke
+    description: "Playwright smoke (login + main flow)"
+    cmd: <your-smoke-test-command>
+    timeout: 300
+    applicable_when:
+      - changed: ["<frontend-glob-1>", "<backend-glob-1>"]
+
+  # --- example: full e2e (only when user explicitly asks)
+  - id: ui-full
+    description: "Full playwright e2e suite (slow)"
+    cmd: <your-full-e2e-command>
+    timeout: 1200
+    applicable_when:
+      - user_hint: ["playwright", "e2e", "full check"]
+
+  # --- example: contract test against backend
+  - id: api-contract
+    description: "Hit each declared API endpoint with a sample payload"
+    cmd: <your-contract-test-command>
+    timeout: 60
+    cwd: "<optional-subdir>"        # default project root
+    applicable_when:
+      - changed: ["<backend-glob>"]
+
+  # --- example: always-on quick check (no applicable_when → always included)
+  - id: schema-validate
+    description: "Validate JSON schemas / OpenAPI spec are well-formed"
+    cmd: <your-schema-validation-command>
+    timeout: 30

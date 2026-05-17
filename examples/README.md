@@ -1,6 +1,6 @@
 # Examples
 
-Two schema-reference templates for the YAML config files the harness reads. Both are **plugin-defined formats** — no other documentation source exists for them, so these examples double as the spec.
+Schema-reference templates for the YAML config files the harness reads. These are **plugin-defined formats** — no other documentation source exists for them, so these examples double as the spec.
 
 They live inside the installed plugin (read-only). When you want to enable one of these features in your project, copy the file out of the plugin install dir into your project's `.harness/` and edit. See the table below.
 
@@ -8,6 +8,7 @@ They live inside the installed plugin (read-only). When you want to enable one o
 |---------|---------|-----------|
 | `repo-registration.yaml.example` | `.harness/repo-registration.yaml` | Auto-proposal of `gh repo create` for new directories at cycle finalization |
 | `post-finish.md.example`          | `.harness/post-finish.md`          | Extra project-specific finishers (formatters, changelogs, custom checks) |
+| `verification-checks.yaml.example` | `.harness/verification-checks.yaml` | Runtime check library (api-contract, ui-smoke, playwright e2e, ...) — Designer picks per cycle, Verifier executes |
 
 ## How to use
 

@@ -85,7 +85,7 @@ The hook never modifies your project's `CLAUDE.md` — the trigger is delivered 
 user request
      │
      ▼
-  Designer ──── emits per-area specs (JSON array, cap 4 per wave)
+  Designer ──── emits per-area specs + verification picks (cap 4 specs per wave)
      │
      ▼
   Executors  ──── dispatched in parallel, in_background
@@ -94,8 +94,9 @@ user request
    Main      ──── checks in periodically while workers run
      │            (TaskOutput, TaskUpdate, TaskStop as needed)
      ▼
-  Verifier   ──── reads all diffs, checks cross-cutting consistency
-     │            (no builds, read-only)
+  Verifier   ──── 6 static cross-cutting checks (diff-only, read-only)
+     │            + any dynamic checks the Designer picked from
+     │              .harness/verification-checks.yaml (smoke, e2e, ...)
      ▼
   Rule-Applier ── review skill, security skill, optional post-finish
      │            rules, optional repo registration
@@ -255,6 +256,38 @@ echo '["review", "security-review"]' > .harness/skip-rules.json
 ```
 
 No example file needed — the format is the one line above.
+
+### 2.4 Verification checks library
+
+Static cross-cutting checks (the six categories in `agents/verifier.md`) catch a lot, but they can't tell you whether the deployed UI actually loads, or whether your API still returns 200 on the smoke route. For that, define a **library of runtime checks** and let the Designer pick the relevant ones per cycle.
+
+```bash
+cp .harness/examples/verification-checks.yaml.example .harness/verification-checks.yaml
+```
+
+Each entry has:
+
+- **`id`** — referenced by Designer's `verification` output.
+- **`cmd`** — the shell command Verifier runs.
+- **`timeout`** — seconds; the command is killed and reported `timeout` past this.
+- **`applicable_when`** — when Designer should include this check:
+  - **`user_hint: [...]`** — keywords to look for in the user request (case-insensitive). Lets you force heavy checks by saying "run playwright" in your request.
+  - **`changed: [...]`** — globs to match against executor outputs. The check runs when a relevant area was touched.
+  - Missing/empty `applicable_when` → always included.
+
+#### How the loop wires up
+
+Each cycle:
+
+1. **Designer** reads the library, picks IDs matching `user_hint` or `changed`, emits `verification: ["ui-smoke", "api-contract"]` alongside the executor specs.
+2. **Verifier** still runs its 6 static checks, then iterates the picked IDs and executes each. Aggregate `status: pass` only if all are pass/skipped.
+3. **On any failure**, the Designer re-plan receives both the static `mismatches` AND the failed `dynamic_checks[]` output — so it can fix the code, change the picks for the next try, or escalate.
+
+#### Choosing what goes in the library
+
+- Smoke tests, contract tests, schema validators → light, fast, almost always relevant. Use `changed:` globs and let Designer include them when the relevant area is touched.
+- Full e2e suites, deploy smokes, heavy integration runs → expensive. Gate them behind `user_hint:` so they only fire when explicitly requested.
+- Domain-owned tests (`pnpm --filter @app/api test`) do **not** belong here. Those are the executor's job; running them again wastes cycles.
 
 ---
 

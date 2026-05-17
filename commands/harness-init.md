@@ -36,9 +36,11 @@ For monorepos, also peek one level deep into the workspace dirs (e.g. `apps/*/pa
 
 If the project looks too small to benefit (single file, no real domain split), say so plainly and stop — don't force executors onto a project that doesn't need them.
 
-## 2. Detect existing executors
+## 2. Detect existing executors and other agents
 
 List `.claude/agents/*-executor.md`. For each, read the `description` field. These are **not** candidates for re-generation — preserve them. New executors must not clash on name or path coverage.
+
+Also list any other `.md` files in `.claude/agents/` that do **not** match the `*-executor.md` pattern. These are normal Claude Code subagents — not managed by the harness. Surface them in the final plan as `Detected non-executor agents (kept untouched)` so the user knows they exist but were not considered for executor generation.
 
 ## 3. Detect formatters / linters (optional finisher candidates)
 
@@ -112,6 +114,27 @@ This is opt-in. Surface it as its own checkbox in the step 4 approval question (
 
 `/harness-init` never proposes a `skip-rules.json`. It's a runtime toggle for "temporarily disable a rule," not a setup decision. Surface this in "Skipped checks" so the user knows it was considered.
 
+## 3e. Detect verification-checks.yaml candidacy
+
+Propose `.harness/verification-checks.yaml` if **any** runtime-verification signal is present **and** the file does not already exist.
+
+| Signal | Suggested entry |
+|---|---|
+| `playwright.config.{ts,js,mjs}` at any depth ≤ 3 | `id: ui-smoke` (smoke-tagged subset) + `id: ui-full` (whole suite, gated by `user_hint`) |
+| `cypress.config.{ts,js}` | `id: ui-smoke` (cypress flavor) |
+| Directory matching `**/test/contract/**` or `**/test/api/**` | `id: api-contract` |
+| `vitest.config.*` or `jest.config.*` with an `integration` project/preset | `id: integration` |
+| `**/e2e/**` directory with test files | `id: e2e` (gated by `user_hint`) |
+| `helm/`, `k8s/`, `terraform/` with a `.smoke.sh` script alongside | `id: deploy-smoke` |
+
+For each detected signal, generate an entry with:
+- `cmd` derived from detected tooling (e.g., `pnpm playwright test --grep @smoke`).
+- `timeout` proportional to scope (smoke ≈ 300s, full e2e ≈ 1200s).
+- `applicable_when.changed` reflecting which executor outputs would justify the check (frontend changes → UI checks; backend changes → API/UI).
+- `applicable_when.user_hint` for heavy checks so the user can force them ("playwright", "e2e", "full check").
+
+If no signals match, skip and surface in "Skipped checks". Most projects without an e2e setup won't have this.
+
 ## 4. Present the plan to the user
 
 Output a single, scannable block. Do **not** call any tools beyond Read/Glob/Bash for inspection at this point.
@@ -161,6 +184,24 @@ Optional: auto-commit to nested repos (polyrepo-only feature)
     creates one commit per nested repo that has changes
     commit message derived from the cycle's user_request
 
+Proposed verification-checks.yaml (runtime check library, Designer picks per cycle):
+  - id: ui-smoke
+      cmd: pnpm playwright test --grep @smoke
+      timeout: 300
+      applicable_when: changed apps/web/**, apps/api/**
+  - id: ui-full
+      cmd: pnpm playwright test
+      timeout: 1200
+      applicable_when: user_hint ["playwright", "e2e", "full check"]
+  - id: api-contract
+      cmd: pnpm test:api-contract
+      timeout: 60
+      applicable_when: changed apps/api/src/**
+
+Detected non-executor agents (kept untouched):
+  - code-reviewer
+  - data-analyst
+
 Proposed .gitignore additions:
   .harness/state.json
   .harness/STOP
@@ -182,6 +223,7 @@ Options to include (omit any section that has nothing to propose):
 - `post-finish.md rules (N proposed)` — formatter / linter / check entries
 - `repo-registration.yaml` — only if section 3b matched
 - `Auto-commit to nested repos` — only if section 3c matched (polyrepo). Adds the `nested-repo-commit` rule to `post-finish.md` (creating the file if absent)
+- `verification-checks.yaml (N entries)` — only if section 3e matched. Runtime check library for Designer to pick from.
 - `.gitignore additions` — runtime state ignores
 
 After the user responds, anything left unchecked is **not written**. A response with zero checkboxes selected = full cancel.
@@ -215,6 +257,12 @@ For approved auto-commit rule (polyrepo only):
     scope: whole-tree
   ```
 - Do not duplicate if a `nested-repo-commit` rule already exists in the file.
+
+For the approved verification-checks.yaml (if any):
+
+- Write `.harness/verification-checks.yaml` only if the file does **not** exist. Never overwrite.
+- Include only the entries the user kept (they may have edited the proposal between plan and apply).
+- Comment-mark fields the user may want to tighten (`cwd`, `timeout`, exact glob lists).
 
 For `.gitignore`:
 
@@ -310,6 +358,7 @@ If the user canceled at step 4, just say `harness-init canceled. No files were w
 - Never overwrite an existing `<name>-executor.md`. Show it as "kept".
 - For `.harness/post-finish.md`: if the file exists, **append** new rules under a `# added by /harness-init` comment; never replace. For the `nested-repo-commit` rule specifically, also check by `name:` to avoid duplicates across re-runs.
 - For `.harness/repo-registration.yaml`: skip silently if the file exists. Never overwrite.
+- For `.harness/verification-checks.yaml`: skip silently if the file exists. Never overwrite.
 - For `.gitignore`: only add lines that are not already present.
 
 ## Guardrails
