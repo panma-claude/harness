@@ -41,10 +41,28 @@ fi
 sid_safe="$(printf '%s' "$sid" | tr -c 'A-Za-z0-9._-' '_')"
 sidecar="${TMPDIR:-/tmp}/panma-harness-title-${sid_safe}.txt"
 
-# Truncate to 15 codepoints (bash ${#var} counts bytes; python is UTF-8-safe)
-# and rstrip any trailing whitespace left by a cut at a word boundary.
+# Truncate to ≤15 codepoints. When the cut lands mid-word, back off to the
+# last space inside the window so we don't display a partial word like
+# "마켓 rebase + pus" — better to show "마켓 rebase +" cleanly. Single very
+# long words (no space in window) still get a hard cut at 15.
+# bash ${#var} counts bytes, so use python for UTF-8 safety.
 if command -v python3 >/dev/null 2>&1; then
-  title="$(python3 -c 'import sys; print(sys.argv[1][:15].rstrip())' "$title" 2>/dev/null)"
+  title="$(python3 -c '
+import sys
+t = sys.argv[1]
+LIMIT = 15
+if len(t) <= LIMIT:
+    print(t.rstrip())
+else:
+    cut = t[:LIMIT]
+    # Mid-word cut? backtrack to last space, but only if it actually trims
+    # off a partial word (i.e. the char at position LIMIT is non-space).
+    if not t[LIMIT].isspace():
+        last_space = cut.rfind(" ")
+        if last_space > 0:
+            cut = cut[:last_space]
+    print(cut.rstrip())
+' "$title" 2>/dev/null)"
 fi
 [ -z "$title" ] && exit 0
 
