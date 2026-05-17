@@ -39,6 +39,8 @@ Claude Code clones the plugin, registers its agents/commands/skills, and wires u
 
 After install, the harness is functional in zero-config mode: any request that matches the activation triggers will route through it, dispatching to `generic-executor` as the catch-all.
 
+For better routing, run `/harness-init` once per project — it scans the codebase, proposes a set of domain executors (and optional finisher rules), and writes them on your confirmation. See [Level 1](#level-1-domain-executors) for the manual equivalent if you'd rather hand-write them.
+
 To upgrade or remove later:
 
 ```
@@ -109,6 +111,7 @@ The full state machine — phases, retry budget, worker check-in heuristics, ide
 
 | Command | Purpose |
 |---------|---------|
+| `/harness-init` | Scan the project, propose a set of domain executors (and optional finisher / `.gitignore` entries), then write them on your confirmation. Idempotent — safe to re-run after structural changes. |
 | `/harness-start <request>` | Force-activate the harness for `<request>`, skipping trigger evaluation. |
 | `/harness-status` | Print a compact snapshot of the current cycle from `.harness/state.json`. |
 | `/harness-stop` | Hard-stop the cycle. Touches `.harness/STOP`, sends `TaskStop` to active workers, marks the cycle `needs_user`. |
@@ -121,7 +124,19 @@ The full state machine — phases, retry budget, worker check-in heuristics, ide
 
 The most common customization. Default behavior routes every Designer chunk to `generic-executor`, which works but is, well, generic. A domain-specific executor lets Designer route the right chunk to a worker that already knows your stack's build command, conventions, and boundary rules.
 
-### Recipe
+### Fastest path: `/harness-init`
+
+```
+/harness-init
+```
+
+Scans the project (workspace manifests, top-level directories, formatter configs), proposes a set of domain executors with detected build commands, and writes them on your confirmation. Also offers optional `post-finish.md` rules (formatter / linter) and `.gitignore` entries. **Nothing is written until you approve.**
+
+Re-run any time the structure changes — existing executors are preserved, new ones are added alongside.
+
+If the project is too small or single-domain, `/harness-init` says so and stops. Use the manual recipe below if you want full control over the wording.
+
+### Manual recipe
 
 1. **Pick a domain name.** Short, lowercase, hyphen-separated. Whatever maps to a coherent area of your project.
 
