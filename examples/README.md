@@ -2,7 +2,7 @@
 
 Two schema-reference templates for the YAML config files the harness reads. Both are **plugin-defined formats** — no other documentation source exists for them, so these examples double as the spec.
 
-`install.sh` seeds them into the host project at `.harness/examples/` so they are always one `cp` away from being active.
+They live inside the installed plugin (read-only). When you want to enable one of these features in your project, copy the file out of the plugin install dir into your project's `.harness/` and edit. See the table below.
 
 | Example | Copy to | Activates |
 |---------|---------|-----------|

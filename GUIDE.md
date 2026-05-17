@@ -30,46 +30,50 @@ Stack-agnostic by design. What constitutes a "domain" is whatever the host proje
 
 ## Quick install
 
-In any project you want to harness:
-
-```bash
-cd <path-to-harness-clone>
-./install.sh /path/to/your/project
+```
+/plugin marketplace add panma-claude/marketplace
+/plugin install panma-harness
 ```
 
-This:
+Claude Code clones the plugin, registers its agents/commands/skills, and wires up a `UserPromptSubmit` hook that injects the activation trigger directive on every prompt. **No project files are modified.** The plugin is fully self-contained.
 
-- Copies the universal agents, slash commands, and the orchestration skill into `<project>/.claude/`.
-- Appends a small "activation trigger" section to `<project>/CLAUDE.md` between markers.
-- Creates `<project>/.harness/` for runtime state.
-- Seeds two YAML schema-reference templates into `<project>/.harness/examples/`.
-
-After install, the harness is fully functional in zero-config mode: any request that matches the activation triggers will route through it, dispatching to `generic-executor` as the catch-all.
+After install, the harness is functional in zero-config mode: any request that matches the activation triggers will route through it, dispatching to `generic-executor` as the catch-all.
 
 To upgrade or remove later:
 
-```bash
-./update.sh    /path/to/your/project   # refresh plugin files, preserve user config
-./uninstall.sh /path/to/your/project   # remove plugin files, preserve .harness/
-./uninstall.sh /path/to/your/project --purge   # also delete .harness/
+```
+/plugin update panma-harness
+/plugin remove panma-harness
 ```
 
-All three scripts accept `--dry-run` to preview without writing.
+`.harness/` (runtime state in the host project) is created by the supervisor on the first cycle. You may want to add these entries to your project's `.gitignore`:
+
+```
+.harness/state.json
+.harness/STOP
+.harness/cycle-*.applied
+```
+
+Or `.harness/` entirely if you treat the whole directory as local-only.
 
 ---
 
 ## How activation works
 
-After install, your project's `CLAUDE.md` contains a block between `<!-- panma-harness-include: BEGIN -->` and `END` markers. This block tells Claude Code to enter harness mode automatically when the user's request matches **any** of:
+The plugin ships a `UserPromptSubmit` hook (`hooks/inject-trigger.sh`) that runs on every user prompt. The hook outputs the contents of `CLAUDE-include.md` — a short list of trigger conditions — into Claude's context. Claude reads the conditions and decides whether to activate harness mode for that prompt.
+
+Triggers (Claude activates when **any** matches):
 
 - 3+ independent concerns (areas, modules, domains).
 - Changes that have separate verification commands (different build/test entry points).
 - Work that is naturally decomposable into parallel chunks.
 - An explicit `/harness-start` invocation.
 
-It does **not** activate for single-file edits, one-line fixes, Q&A, or single-domain work. When in doubt, the supervisor errs on the side of NOT activating.
+The harness does **not** activate for single-file edits, one-line fixes, Q&A, or single-domain work. When in doubt, the supervisor errs on the side of NOT activating.
 
 If you want to force activation despite small-looking work, use `/harness-start`. If you want to suppress it for a request that would otherwise activate, say "do it directly" or "no harness" in your message.
+
+The hook never modifies your project's `CLAUDE.md` — the trigger is delivered fresh each turn from the plugin install location.
 
 ---
 
@@ -264,11 +268,11 @@ Two common causes:
 
 1. **Trigger didn't match.** The activation conditions are conservative on purpose. If your request looks like a single-area change to the supervisor, it won't activate. Use `/harness-start <your request>` to force.
 
-2. **CLAUDE.md include not loaded.** Confirm with:
-   ```bash
-   grep -F "panma-harness-include" CLAUDE.md
+2. **Hook not firing.** The plugin's `UserPromptSubmit` hook should run on every prompt. Confirm the plugin is installed:
    ```
-   If empty, re-run `install.sh`.
+   /plugin list
+   ```
+   If `panma-harness` is not listed, run `/plugin install panma-harness`. If listed but the hook is not firing, check Claude Code's hook logs for errors from `inject-trigger.sh`.
 
 ### "The harness activated when I didn't want it to."
 
@@ -300,9 +304,9 @@ Designer escalates when it cannot see a path forward. Read the `reason` field in
 
 The supervisor trusts `.harness/state.json` as the single source of truth. If a crash or manual edit leaves it in an invalid state, the next iteration will fail to read it. Recovery: delete `.harness/state.json` (and `.harness/STOP` if present) and re-issue your request. The harness will start a fresh cycle. Any actual file changes already made by previous workers remain on disk; Designer will see the current working tree and plan from there.
 
-### "How do I make this work on a private repo on a different machine?"
+### "How do I make this work on a different machine?"
 
-Same as cloning any other private repo of yours: ensure that machine has SSH key access to the org and the SSH-via-`git` workflow is set up. The harness install scripts don't do anything magic — they just `cp` files locally.
+Same as installing any other Claude Code plugin from a marketplace: on the new machine, run `/plugin marketplace add panma-claude/marketplace` once, then `/plugin install panma-harness`. If the marketplace and plugin repos are private, the machine needs git SSH access to the panma-claude org.
 
 ---
 
@@ -324,7 +328,10 @@ These are intentional non-goals. Listing them so expectations match reality:
 
 ## Where to look for more
 
+After `/plugin install`, the plugin lives at `~/.claude/plugins/marketplaces/panma/plugins/panma-harness/` (path may vary by Claude Code version). The relevant files inside:
+
 - **The orchestration protocol in full**: `skills/harness-orchestration/SKILL.md`.
 - **Each universal role's contract**: `agents/<role>.md` (designer, generic-executor, verifier, rule-applier).
+- **The activation trigger text**: `CLAUDE-include.md`.
 - **YAML schema references**: `examples/*.example` and `examples/README.md`.
-- **Issues / questions**: the panma-claude/harness repo.
+- **Issues / questions**: the [panma-claude/harness](https://github.com/panma-claude/harness) repo.

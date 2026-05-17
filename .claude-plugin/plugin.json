@@ -5,8 +5,16 @@
   "author": {
     "name": "panma"
   },
-  "repository": {
-    "type": "git",
-    "url": "git@github.com:panma-claude/harness.git"
-  }
+  "repository": "https://github.com/panma-claude/harness",
+  "keywords": [
+    "claude-code",
+    "plugin",
+    "multi-agent",
+    "orchestration",
+    "harness"
+  ],
+  "commands": "./commands/",
+  "skills": [
+    "./skills/harness-orchestration/"
+  ]
 }
