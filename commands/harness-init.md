@@ -53,7 +53,7 @@ Look for these signals — each suggests a `post-finish.md` entry:
 | `.golangci.yml` or `gofumpt` | `shell: gofmt -w` / `golangci-lint run --fix` |
 | `.editorconfig` only | nothing — too generic |
 
-Don't propose finishers for tools you can't see installed. If `package.json` has no `prettier` in `devDependencies`, do not propose `prettier --write`.
+Don't propose finishers for tools you can't see installed. If `package.json` has no `prettier` in `devDependencies`, do not propose `prettier --write` — but if the signal table above is something you actively checked for and rejected, record it for the "Skipped checks" section in step 4 so the user sees what was evaluated.
 
 ## 3b. Detect repo-registration candidacy (optional, niche)
 
@@ -75,11 +75,15 @@ repo-registration.yaml — TEMPLATE (you must fill in placeholders before it act
     - dir: "packages/*"  → repo_name: "{name}"
 ```
 
-If candidacy does **not** hold, skip silently — don't mention it. Most projects don't need this.
+If candidacy does **not** hold, do **not** propose it — but record the reason and surface it in the final plan under "Skipped checks" (see step 4). The user should always be able to tell what was evaluated and why it was not proposed.
 
 ## 4. Present the plan to the user
 
-Output a single, scannable block. Do **not** call any tools beyond Read/Glob/Bash for inspection at this point. Format:
+Output a single, scannable block. Do **not** call any tools beyond Read/Glob/Bash for inspection at this point.
+
+The plan **must** include a "Skipped checks" section at the end listing every optional component you evaluated but chose not to propose, with a one-line reason. This makes the command's decisions auditable — the user should never wonder "did it consider X?". If nothing was skipped, write `Skipped checks: none`.
+
+Format:
 
 ```
 Detected stack: <one-line summary, e.g. "pnpm monorepo, 3 workspaces, TypeScript">
@@ -119,6 +123,10 @@ Proposed .gitignore additions:
   .harness/state.json
   .harness/STOP
   .harness/cycle-*.applied
+
+Skipped checks (evaluated but not proposed):
+  - repo-registration.yaml — not a monorepo (no apps/packages/services/crates dirs found)
+  - post-finish: black/ruff — no Python config detected
 
 No changes have been written yet.
 ```
