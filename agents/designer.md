@@ -25,7 +25,9 @@ You are the **Designer** subagent in the panma-harness orchestration. Your job i
 
 ### 3. Select verification checks (new responsibility)
 
-If `.harness/verification-checks.yaml` exists, read it. For each entry in `checks[]`, decide whether to include it in this cycle's verification spec:
+If Main tells you `verification_spec` is **already populated** (the user pre-picked via interactive mode), **skip this step entirely**. Output only `{"executors": [...]}` — Main will keep the existing `verification_spec`. Do not invent a `verification` field in this case.
+
+Otherwise, if `.harness/verification-checks.yaml` exists, read it. For each entry in `checks[]`, decide whether to include it in this cycle's verification spec:
 
 - **`applicable_when.user_hint`** — if any keyword in this list appears (case-insensitive) in the user request, include the check. Example: user says "playwright 로 화면까지 확인" → include any check with `playwright` in its `user_hint`.
 - **`applicable_when.changed`** — if any executor in your plan has `outputs` (or `inputs`) paths overlapping with the glob list, include the check. Example: an executor writes to `apps/web/src/**` → include `ui-smoke` if its `applicable_when.changed` lists `apps/web/**`.

@@ -116,6 +116,16 @@ Propose only when:
 
 This is opt-in. Surface it as its own checkbox in the step 4 approval question (see below). Do not enable it silently.
 
+## 3c1. Detect preferences.yaml candidacy
+
+Propose `.harness/preferences.yaml` (mode opt-in) **only when**:
+- The file does not already exist, AND
+- Cross-cutting verification looks weak: pattern (b) polyrepo / nested-clones is detected OR `verification-checks.yaml` is absent (no detected framework signals from §3e).
+
+When both gates pass, suggest `mode: interactive` as the default in the template (rationale: framework-less projects benefit most from the "Manual" verification option). For projects with strong framework signals, recommend `mode: auto` and skip the proposal — the auto flow handles them well already.
+
+Surface this as its own checkbox in step 4 so the user can opt out cleanly.
+
 ## 3d. Skip-rules.json (intentionally not proposed)
 
 `/harness-init` never proposes a `skip-rules.json`. It's a runtime toggle for "temporarily disable a rule," not a setup decision. Surface this in "Skipped checks" so the user knows it was considered.
@@ -238,6 +248,7 @@ Options to include (omit any section that has nothing to propose):
 - `repo-registration.yaml` — only if section 3b matched
 - `Auto-commit to nested repos` — only if section 3c matched (polyrepo). Adds the `nested-repo-commit` rule to `post-finish.md` (creating the file if absent)
 - `verification-checks.yaml (N entries)` — only if section 3e matched. Runtime check library for Designer to pick from.
+- `preferences.yaml (mode: interactive)` — only if section 3c1 matched. Switches harness from silent auto-activation to per-cycle "proceed?" + "how to verify?" prompts. Useful for projects without a strong automated verification setup.
 - `.gitignore additions` — runtime state ignores
 
 After the user responds, anything left unchecked is **not written**. A response with zero checkboxes selected = full cancel.
@@ -277,6 +288,11 @@ For the approved verification-checks.yaml (if any):
 - Write `.harness/verification-checks.yaml` only if the file does **not** exist. Never overwrite.
 - Include only the entries the user kept (they may have edited the proposal between plan and apply).
 - Comment-mark fields the user may want to tighten (`cwd`, `timeout`, exact glob lists).
+
+For the approved preferences.yaml (if any):
+
+- Write `.harness/preferences.yaml` with the recommended `mode:` from section 3c1 (typically `interactive` for the cases this gets proposed).
+- Only write if the file does **not** exist. Never overwrite.
 
 For `.gitignore`:
 
@@ -373,6 +389,7 @@ If the user canceled at step 4, just say `harness-init canceled. No files were w
 - For `.harness/post-finish.md`: if the file exists, **append** new rules under a `# added by /harness-init` comment; never replace. For the `nested-repo-commit` rule specifically, also check by `name:` to avoid duplicates across re-runs.
 - For `.harness/repo-registration.yaml`: skip silently if the file exists. Never overwrite.
 - For `.harness/verification-checks.yaml`: skip silently if the file exists. Never overwrite.
+- For `.harness/preferences.yaml`: skip silently if the file exists. Never overwrite.
 - For `.gitignore`: only add lines that are not already present.
 
 ## Guardrails

@@ -1,0 +1,33 @@
+# panma-harness — Preferences (example template)
+#
+# Controls how Main activates the harness when a request matches the
+# triggers. Read by Main (via CLAUDE-include.md) on every prompt that
+# could activate. If the file is missing, mode defaults to `auto`.
+#
+# Modes:
+#
+#   auto         — current default. Main triages silently and calls
+#                  Skill(loop, /harness-iterate ...) directly. Designer
+#                  picks verification from verification-checks.yaml.
+#                  No interactive prompts. Best when the harness setup
+#                  is well-tuned and you trust auto behavior.
+#
+#   confirm      — Main shows its triage decision via AskUserQuestion
+#                  before activating: "I think this is harness work
+#                  because <reason>. Proceed? [Yes / Do directly / Cancel]"
+#                  Verification still auto-picked. Good for occasional
+#                  oversight without blocking the verification flow.
+#
+#   interactive  — confirm + ask verification upfront. After Proceed,
+#                  Main asks "How should I verify?" with options:
+#                    - Auto-pick (let Designer decide, default)
+#                    - Manual (you'll verify the changes yourself)
+#                    - <each check id from verification-checks.yaml>
+#                    - Skip dynamic (static only)
+#                  Picks are passed via --verification=<...> activation
+#                  arg. Designer skips its own picking. Best for
+#                  projects without a framework-based verification
+#                  setup, or while bootstrapping confidence in the
+#                  harness's choices.
+
+mode: auto

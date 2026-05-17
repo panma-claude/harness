@@ -39,7 +39,9 @@ Collect any mismatches into `mismatches[]` in the report.
 
 ## Phase 2 — Project-defined runtime checks (run only when spec lists them)
 
-If `verification_spec` is non-empty:
+**Special case — `verification_spec == ["manual"]`:** The user chose to verify the cycle's changes themselves (interactive mode). Skip Phase 2 entirely. Emit `dynamic_checks: []` and put `notes: "deferred_to_user"` in the report. Static phase (above) still runs — that part is not optional.
+
+Otherwise, if `verification_spec` is non-empty:
 
 1. Read `.harness/verification-checks.yaml`. (If it doesn't exist while spec is non-empty, that's a config error — report `dynamic_checks` entry with `status: skipped`, reason "verification-checks.yaml missing".)
 2. For each `id` in `verification_spec`:
@@ -47,7 +49,7 @@ If `verification_spec` is non-empty:
    - If not found: record `status: skipped`, reason "id not in library".
    - Else: execute `cmd` in the entry's `cwd` (default project root) with the `timeout` (default 300s).
    - Record `status: pass | fail | timeout`, `duration` (seconds), and the last ~20 lines of output (or a summary if huge).
-3. Do **not** run anything not listed in `verification_spec`. The Designer's selection is authoritative for this cycle.
+3. Do **not** run anything not listed in `verification_spec`. The Designer's (or user's) selection is authoritative for this cycle.
 
 These checks **do** execute code — they're the place for playwright, contract tests, smoke endpoints, schema validators against a live DB. Anything that needs a process to start.
 

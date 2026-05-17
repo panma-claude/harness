@@ -11,7 +11,15 @@ You are now the **supervisor (Main)** of the panma-harness multi-agent cycle. Fo
 **This iteration's pre-flight (always run first):**
 
 - If `.harness/STOP` exists, terminate immediately with `termination_reason: "user_stop"` and report to the user. Do NOT call `ScheduleWakeup`.
-- If `.harness/state.json` does not exist, initialize a new cycle from `$ARGUMENTS` (verbatim as `user_request`): write `state.json` with `phase: "designing"`, `cycle_id: 1`, `retry_count: 0`, `retry_limit: 5`. Then proceed into the designing phase.
+- If `.harness/state.json` does not exist, initialize a new cycle from `$ARGUMENTS`:
+  - Strip any leading `--verification=<pick>` flag and capture the value (see below); the rest of `$ARGUMENTS` becomes `user_request` verbatim.
+  - Write `state.json` with `phase: "designing"`, `cycle_id: 1`, `retry_count: 0`, `retry_limit: 5`.
+  - Set `verification_spec` based on the captured flag:
+    - `--verification=auto` (or no flag) → `[]` (Designer will pick later)
+    - `--verification=manual` → `["manual"]` sentinel; Verifier will skip its dynamic phase and the cycle ends with a "please verify" message
+    - `--verification=none` → `[]` AND set `state.verification_user_skip: true` so Designer knows not to re-pick (vs auto where Designer does pick)
+    - `--verification=<id-1>,<id-2>` → `["<id-1>", "<id-2>"]`; Designer will use this as-is and not re-pick
+  - Then proceed into the designing phase.
 - Otherwise, read `state.json` and act on the current phase per §4.
 
 ---
@@ -59,7 +67,12 @@ All persistent state lives in the host project's `.harness/` directory.
 }
 ```
 
-`verification_spec` is the list of check IDs the Designer picked for this cycle from `.harness/verification-checks.yaml` (if present). Verifier honors it during the `verifying` phase. Empty list means the Verifier runs only static checks.
+`verification_spec` is the list of check IDs Verifier will execute in its dynamic phase. Set in one of three ways:
+- Designer picks from `.harness/verification-checks.yaml` during designing (default `auto` flow).
+- Pre-populated from `--verification=<pick>` activation arg when the user chose explicitly via the interactive mode (Designer skips picking).
+- Sentinel `["manual"]` — user opted to verify themselves; Verifier skips dynamic phase entirely, and the cycle's final report includes a "please verify" prompt with the changed files.
+
+`verification_user_skip` (optional bool) — when true, both Designer and Verifier treat the empty `verification_spec` as "user said skip", not "no checks defined".
 
 `termination_reason` is one of: `null`, `"success"`, `"user_stop"`, `"retry_limit"`, `"designer_escalation"`, `"error"`.
 
@@ -120,10 +133,11 @@ On activation, before the first iteration:
 ### Phase: `designing`
 
 1. Dispatch the **designer** subagent (foreground Task, not background).
-   - Input: current `user_request` + the most recent failure report (if `retry_count > 0`).
+   - Input: current `user_request` + the most recent failure report (if `retry_count > 0`) + a flag indicating whether `verification_spec` is already populated.
+   - If `verification_spec` is already populated (from a `--verification=` activation arg, including the `["manual"]` sentinel), tell Designer to **skip** verification picking and only emit `{"executors": [...]}`. Designer should not re-pick.
 2. Designer returns either a `{"executors": [...], "verification": [...]}` object or `{"escalate": true, "reason": "..."}`. Tolerate the legacy plain-array form by treating it as `{executors: <array>, verification: []}`.
 3. If escalate: set `phase: "needs_user"`, `termination_reason: "designer_escalation"`. Report to user. Do NOT call ScheduleWakeup.
-4. Else: store specs. Take the first `min(len(executors), 4)` into `active_workers` (concurrency cap = 4). Push the rest into `pending_specs`. Store the Designer's `verification` list into `verification_spec`. Append the dispatch to `designer_history`.
+4. Else: store specs. Take the first `min(len(executors), 4)` into `active_workers` (concurrency cap = 4). Push the rest into `pending_specs`. If `verification_spec` is still empty AND Designer returned a `verification` list, store it. If `verification_spec` was already populated from activation, keep it as-is — Designer's picks are ignored. Append the dispatch to `designer_history`.
 5. Move to `phase: "executing"`. Continue same turn into the executing phase (no need to wait).
 
 ### Phase: `executing`
@@ -143,7 +157,8 @@ On activation, before the first iteration:
 ### Phase: `verifying`
 
 1. Dispatch the **verifier** subagent (foreground Task).
-   - Input: `completed_workers` reports + access to the working tree + the current `verification_spec` (list of check IDs from Designer).
+   - Input: `completed_workers` reports + access to the working tree + the current `verification_spec`.
+   - If `verification_spec` is `["manual"]`, tell Verifier to run **only** its static phase and emit `dynamic_checks: []` with a `status: deferred_to_user` note in `notes`. Verifier still executes the 6 static cross-cutting checks; that part is not optional.
 2. Verifier returns `{status: pass | fail, mismatches: [...], dynamic_checks: [...], notes: ...}`.
 3. Store in `verifier_result`.
 4. If `status: pass` → move to `phase: "finalizing"`, continue same turn.
@@ -160,7 +175,16 @@ On activation, before the first iteration:
    - On user rejection: skip those registrations, mark them dismissed.
 4. Move to `phase: "complete"`.
 5. Report final summary to user (designer plan, worker results, verifier, rule-applier).
-6. Do NOT call ScheduleWakeup. The Ralph loop exits.
+6. **If `verification_spec` was `["manual"]`**, append a "Please verify" block to the final summary:
+   ```
+   Verification deferred to you.
+   Changed files (N):
+     - <path>
+     - <path>
+     ...
+   Please verify manually (browser, smoke command, whatever fits) and let me know if anything looks wrong.
+   ```
+7. Do NOT call ScheduleWakeup. The Ralph loop exits.
 
 ### Phase: `complete` / `needs_user`
 

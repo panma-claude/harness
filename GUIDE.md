@@ -291,6 +291,26 @@ Each cycle:
 - Full e2e suites, deploy smokes, heavy integration runs → expensive. Gate them behind `user_hint:` so they only fire when explicitly requested.
 - Domain-owned tests (`pnpm --filter @app/api test`) do **not** belong here. Those are the executor's job; running them again wastes cycles.
 
+### 2.5 Activation mode (interactive vs auto)
+
+By default the harness activates silently — once Main decides the request matches the triggers, it just starts the cycle. For projects where you want more oversight, or where automated verification is weak (no playwright / e2e framework), drop in a preferences file:
+
+```bash
+cp .harness/examples/preferences.yaml.example .harness/preferences.yaml
+```
+
+Three modes:
+
+| Mode | When activating | When choosing verification |
+|---|---|---|
+| `auto` (default) | Silent. Just runs. | Designer picks from `verification-checks.yaml`. |
+| `confirm` | Shows triage decision: "I think this is harness work because <reason>. Proceed?" | Designer picks. |
+| `interactive` | Same prompt as `confirm`. | After Proceed, also asks "How should I verify?" with options: **Auto-pick**, **Manual** (you verify yourself), each check id, **Skip dynamic**. |
+
+The `Manual` option is the key escape hatch for framework-less projects: cycle runs, Verifier does its 6 static checks, then the final report says "please verify these N files yourself" — no false-positive failures from missing dynamic checks. Pair it with `interactive` mode when your project's verification story is a browser tab and a manual eye, not a CI suite.
+
+You can change mode mid-project — flip the file to `auto` once your verification-checks.yaml gets robust, or back to `interactive` when working on something delicate.
+
 ---
 
 ## Inspecting state
