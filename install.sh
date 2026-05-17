@@ -160,14 +160,11 @@ cat <<EOF
 [install]   .harness/examples/                (copy-paste templates)
 [install]   CLAUDE.md  +include section (between panma-harness markers)
 
-Next steps (optional, for full power):
+Next steps (all optional — harness already works as-is via generic-executor):
 
-  1) Define domain executors for your project:
-       ls .harness/examples/
-       cp .harness/examples/<your-domain>-executor.md.example \\
-          .claude/agents/<your-domain>-executor.md
-     Then edit it: replace placeholders with your stack's build/test command,
-     domain name, and any project-specific constraints.
+  1) Define a domain executor (recipe in GUIDE.md):
+       \$EDITOR .claude/agents/<your-domain>-executor.md
+     Designer auto-discovers any *-executor.md and routes matching specs to it.
 
   2) Enable auto repo registration:
        cp .harness/examples/repo-registration.yaml.example .harness/repo-registration.yaml
@@ -175,6 +172,6 @@ Next steps (optional, for full power):
   3) Add project-specific finish rules:
        cp .harness/examples/post-finish.md.example .harness/post-finish.md
 
-You can start using the harness right away even without the optional steps —
-generic-executor will absorb any work that has no specialized executor.
+  4) Disable noisy default rules:
+       echo '["review", "security-review"]' > .harness/skip-rules.json
 EOF
