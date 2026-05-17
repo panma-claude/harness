@@ -185,7 +185,7 @@ When an executor or the verifier reports failure:
      2. Stash the current changes and let the user take over.
      3. Discard the work (revert).
    - Do NOT call ScheduleWakeup.
-3. Else: clear `active_workers` and `completed_workers`, move to `phase: "designing"`. Designer will be invoked with the failure report so it can re-plan.
+3. Else: clear `active_workers` (cancel any survivors with `TaskStop`); **preserve `completed_workers`** so Designer knows which work has already landed on disk and does not re-plan it. Move to `phase: "designing"`. Designer will be invoked with the failure report **plus the list of completed workers** so it can re-plan only what is missing.
 
 ---
 

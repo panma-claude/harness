@@ -296,6 +296,10 @@ Default budget is 5. When exhausted, Main pauses with `phase: needs_user` and re
 
 Designer escalates when it cannot see a path forward. Read the `reason` field in its escalation output. Usually means either (a) the request is too vague to decompose, or (b) the executors available don't cover the requested work and `generic-executor` isn't a great fit. Either rephrase, or write a domain executor that better matches the work.
 
+### "state.json is corrupt / partially written."
+
+The supervisor trusts `.harness/state.json` as the single source of truth. If a crash or manual edit leaves it in an invalid state, the next iteration will fail to read it. Recovery: delete `.harness/state.json` (and `.harness/STOP` if present) and re-issue your request. The harness will start a fresh cycle. Any actual file changes already made by previous workers remain on disk; Designer will see the current working tree and plan from there.
+
 ### "How do I make this work on a private repo on a different machine?"
 
 Same as cloning any other private repo of yours: ensure that machine has SSH key access to the org and the SSH-via-`git` workflow is set up. The harness install scripts don't do anything magic — they just `cp` files locally.
