@@ -122,24 +122,35 @@ This is opt-in. Surface it as its own checkbox in the step 4 approval question (
 
 ## 3e. Detect verification-checks.yaml candidacy
 
-Propose `.harness/verification-checks.yaml` if **any** runtime-verification signal is present **and** the file does not already exist.
+`verification-checks.yaml` is just a list of shell commands the Verifier runs as the **cross-cutting check** between domains. It does not require any specific testing framework — a `curl + bash` script, a `psql -c "..."`, a custom CLI, or anything else that exits 0/nonzero is fine.
+
+**Trigger:** propose the file whenever **2+ executors will exist after this init run** (existing + newly proposed), AND the file does not already exist. Multi-domain projects almost always benefit from at least one cross-cutting check.
+
+**What to put in the proposal:**
+
+1. **One always-on scaffold entry per executor pair worth checking** — id like `cross-cutting-smoke`, with `cmd: <your-cross-cutting-check-command>` as a placeholder the user fills in. `applicable_when.changed` lists the executors' output globs so it triggers when those areas change.
+
+2. **Tool-derived entries (bonus)** — if any of these signals fire, add concrete entries on top of the scaffold:
 
 | Signal | Suggested entry |
 |---|---|
 | `playwright.config.{ts,js,mjs}` at any depth ≤ 3 | `id: ui-smoke` (smoke-tagged subset) + `id: ui-full` (whole suite, gated by `user_hint`) |
 | `cypress.config.{ts,js}` | `id: ui-smoke` (cypress flavor) |
-| Directory matching `**/test/contract/**` or `**/test/api/**` | `id: api-contract` |
-| `vitest.config.*` or `jest.config.*` with an `integration` project/preset | `id: integration` |
+| `**/test/contract/**` or `**/test/api/**` directories | `id: api-contract` |
+| `vitest.config.*` / `jest.config.*` with an `integration` project | `id: integration` |
 | `**/e2e/**` directory with test files | `id: e2e` (gated by `user_hint`) |
-| `helm/`, `k8s/`, `terraform/` with a `.smoke.sh` script alongside | `id: deploy-smoke` |
+| `**/*IT.java` (Spring integration test convention) | `id: integration` with the project's build wrapper (`./gradlew integrationTest` etc.) |
+| `**/*.feature` (Karate / Cucumber) | `id: bdd-smoke` |
+| `**/*.postman_collection.json` | `id: postman-smoke` (Newman runner) |
+| `bin/*smoke*.sh` or `scripts/*smoke*.sh` | `id: smoke-script` |
 
-For each detected signal, generate an entry with:
-- `cmd` derived from detected tooling (e.g., `pnpm playwright test --grep @smoke`).
+For each entry:
+- `cmd` derived from the signal (or placeholder for scaffold entries).
 - `timeout` proportional to scope (smoke ≈ 300s, full e2e ≈ 1200s).
-- `applicable_when.changed` reflecting which executor outputs would justify the check (frontend changes → UI checks; backend changes → API/UI).
-- `applicable_when.user_hint` for heavy checks so the user can force them ("playwright", "e2e", "full check").
+- `applicable_when.changed` matching the executor outputs the check covers.
+- `applicable_when.user_hint` for heavy checks so the user can force them.
 
-If no signals match, skip and surface in "Skipped checks". Most projects without an e2e setup won't have this.
+**Skip only if** there's just one executor (no cross-cutting to check) or the file already exists. Otherwise propose at least the scaffold and let the user fill in the cmd.
 
 ## 4. Present the plan to the user
 
@@ -189,15 +200,15 @@ Optional: auto-commit to nested repos (polyrepo-only feature)
     creates one commit per nested repo that has changes
     commit message derived from the cycle's user_request
 
-Proposed verification-checks.yaml (runtime check library, Designer picks per cycle):
-  - id: <derived-from-detected-tooling>
+Proposed verification-checks.yaml (cross-cutting check library, Designer picks per cycle):
+  - id: cross-cutting-smoke    ← scaffold; fill in cmd yourself
+      cmd: <your-cross-cutting-check-command>
+      timeout: 300
+      applicable_when: changed <executor-output-globs>
+  - id: <tool-derived-id>      ← only when a specific tooling signal fired
       cmd: <derived-command>
       timeout: <seconds>
-      applicable_when: <derived-from-executor-outputs>
-  - id: <heavier-check-id>
-      cmd: <full-suite-command>
-      timeout: <seconds>
-      applicable_when: user_hint [<keywords>]
+      applicable_when: <derived-criteria>
 
 Other agents (not managed by harness):
   - <name>

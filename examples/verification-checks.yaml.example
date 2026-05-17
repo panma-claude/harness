@@ -3,6 +3,12 @@
 # Read by the Designer to pick a subset of checks for each cycle, then
 # executed by the Verifier in its dynamic phase.
 #
+# A "check" is just a shell command. You do NOT need a specific testing
+# framework (playwright / cypress / etc.) — anything that exits 0 on
+# success and nonzero on failure works: `curl + bash`, `psql -c "..."`,
+# a custom CLI runner, an integration script. The point is to verify the
+# combined behavior across domains, not to use any particular tool.
+#
 # Designer's selection rule (per check):
 #   include if ANY of applicable_when[] matches:
 #     - user_hint: list of keywords; matches case-insensitively against
@@ -22,13 +28,22 @@
 # verification picks, or escalate.
 
 checks:
-  # --- example: lightweight smoke test (always relevant when frontend changes)
-  - id: ui-smoke
-    description: "Playwright smoke (login + main flow)"
-    cmd: <your-smoke-test-command>
+  # --- example: plain cross-cutting smoke (no framework, just a shell cmd)
+  # The simplest form: hit a real endpoint and assert. Works for any stack.
+  - id: cross-cutting-smoke
+    description: "Verify the combined system answers after backend+frontend changes"
+    cmd: <your-cross-cutting-check-command>
     timeout: 300
     applicable_when:
-      - changed: ["<frontend-glob-1>", "<backend-glob-1>"]
+      - changed: ["<frontend-glob>", "<backend-glob>"]
+
+  # --- example: framework-based smoke (when you happen to have one)
+  - id: ui-smoke
+    description: "Playwright / Cypress smoke (login + main flow)"
+    cmd: <your-framework-smoke-command>
+    timeout: 300
+    applicable_when:
+      - changed: ["<frontend-glob>", "<backend-glob>"]
 
   # --- example: full e2e (only when user explicitly asks)
   - id: ui-full

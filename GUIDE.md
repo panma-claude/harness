@@ -259,7 +259,9 @@ No example file needed — the format is the one line above.
 
 ### 2.4 Verification checks library
 
-Static cross-cutting checks (the six categories in `agents/verifier.md`) catch a lot, but they can't tell you whether the deployed UI actually loads, or whether your API still returns 200 on the smoke route. For that, define a **library of runtime checks** and let the Designer pick the relevant ones per cycle.
+Static cross-cutting checks (the six categories in `agents/verifier.md`) catch a lot, but they can't tell you whether the running system actually answers correctly after multiple domains changed. For that, define a **library of cross-cutting checks** and let the Designer pick the relevant ones per cycle.
+
+A "check" is just a shell command — `curl + bash`, a `psql -c "..."`, a custom CLI, a Postman/Newman run, a `./gradlew integrationTest`, a `pnpm playwright`, anything that exits 0 on success and nonzero on failure. You do **not** need a specific testing framework.
 
 ```bash
 cp .harness/examples/verification-checks.yaml.example .harness/verification-checks.yaml
