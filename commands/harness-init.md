@@ -232,6 +232,8 @@ Proposed .gitignore additions:
   .harness/cycle-*.applied
   .harness/skip-rules.json
   .harness/history/
+  .harness/verifier-progress.json
+  .harness/rule-applier-progress.json
 
 Skipped checks (evaluated but not proposed):
   - skip-rules.json — runtime toggle, not a setup file (create manually if needed)

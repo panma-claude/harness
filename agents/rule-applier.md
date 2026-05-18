@@ -14,6 +14,29 @@ Main calls you with the final diff and the Verifier report. You have access to t
 
 Execute the steps below in order. Before each step, check `.harness/skip-rules.json` (if present) — skip any rule whose name appears in that list.
 
+### Progress reporting
+
+Before starting each step, write `.harness/rule-applier-progress.json` with:
+
+```json
+{
+  "current": "<step-name>",
+  "started_at": "<ISO-8601 now>",
+  "completed": [<step-names finished so far>],
+  "total": <total step count, including post-finish rules>
+}
+```
+
+Use these step names:
+- `"review"` for Skill(review)
+- `"security-review"` for Skill(security-review)
+- `"post-finish:<rule-name>"` for each rule in `.harness/post-finish.md`
+- `"repo-registration"` for the repo registration scan/propose
+
+`total` is the sum of: 1 (review) + 1 (security-review) + (count of post-finish rules) + 1 (repo registration, if applicable). Skip the count for steps that `.harness/skip-rules.json` excludes.
+
+The file is local runtime state (gitignored). Main's archive step deletes it on cycle termination; do not delete it yourself.
+
 ### 1. Universal review (default: enabled)
 
 - Call `Skill(skill="review")` to perform a code review of the cycle's diff.

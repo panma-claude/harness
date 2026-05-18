@@ -104,6 +104,25 @@ Project-local extensions for Rule-Applier. Honored by Rule-Applier directly.
 
 Project-local library of runtime verification checks (api-contract, ui-smoke, playwright e2e, etc.). Read by Designer to pick per-cycle `verification_spec`, then executed by Verifier in its dynamic phase. Honored by Designer and Verifier directly.
 
+### `.harness/verifier-progress.json` (transient, optional)
+
+Written by the **verifier** subagent before each dynamic check in Phase 2. Read by panma-hud's statusline to show live verifier progress. Shape:
+
+```json
+{
+  "current": "<check-id>",
+  "started_at": "<ISO-8601>",
+  "completed": ["<id-1>", "<id-2>"],
+  "total": <N>
+}
+```
+
+Cleaned up by Main at the archive step (§8). Should be in `.gitignore`.
+
+### `.harness/rule-applier-progress.json` (transient, optional)
+
+Written by the **rule-applier** subagent before each finalization step (review, security-review, each post-finish rule, repo-registration). Same shape as verifier-progress. Read by panma-hud's statusline to show live finalizing progress. Cleaned up by Main at the archive step (§8). Should be in `.gitignore`.
+
 ### `.harness/history/` (cycle archive)
 
 When a cycle terminates (success or `needs_user`), its final `state.json` is archived here and the live `state.json` is removed so the next user request starts a fresh cycle. Two files are written per terminated cycle:
@@ -322,6 +341,7 @@ Before reporting the summary, archive the cycle so it survives the next request:
    ```
    Append, do not rewrite the whole array — read existing, push, write back.
 6. **Delete `.harness/state.json`** so the next user request starts a fresh cycle.
+7. **Delete transient progress files** if present: `.harness/verifier-progress.json`, `.harness/rule-applier-progress.json`. They are mid-run state and have no value after the cycle ends (the archived state.json + verifier_result / rule_applier_result are the authoritative summary).
 
 If archive fails (disk full, permission denied, etc.), still report the summary to the user — never leave them in the dark — but include a single line noting the archive failure and the original `state.json` path so they can keep it manually.
 

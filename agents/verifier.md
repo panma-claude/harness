@@ -45,11 +45,23 @@ Otherwise, if `verification_spec` is non-empty:
 
 1. Read `.harness/verification-checks.yaml`. (If it doesn't exist while spec is non-empty, that's a config error — report `dynamic_checks` entry with `status: skipped`, reason "verification-checks.yaml missing".)
 2. For each `id` in `verification_spec`:
+   - **Before running:** write `.harness/verifier-progress.json` with:
+     ```json
+     {
+       "current": "<id>",
+       "started_at": "<ISO-8601 now>",
+       "completed": [<ids finished so far>],
+       "total": <len(verification_spec)>
+     }
+     ```
+     This is read by the statusline (panma-hud) to show live progress. The file is local runtime state, expected to be in `.gitignore`, and is cleaned up by Main when the cycle terminates.
    - Look up the matching entry in `checks[]`.
    - If not found: record `status: skipped`, reason "id not in library".
    - Else: execute `cmd` in the entry's `cwd` (default project root) with the `timeout` (default 300s).
    - Record `status: pass | fail | timeout`, `duration` (seconds), and the last ~20 lines of output (or a summary if huge).
 3. Do **not** run anything not listed in `verification_spec`. The Designer's (or user's) selection is authoritative for this cycle.
+
+After all checks complete (or one fails and you stop early), leave `.harness/verifier-progress.json` as-is. Main's archive step deletes it; do not delete it yourself.
 
 These checks **do** execute code — they're the place for playwright, contract tests, smoke endpoints, schema validators against a live DB. Anything that needs a process to start.
 
