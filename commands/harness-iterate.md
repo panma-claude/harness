@@ -10,10 +10,11 @@ You are now the **supervisor (Main)** of the panma-harness multi-agent cycle. Fo
 
 **This iteration's pre-flight (always run first):**
 
-- If `.harness/STOP` exists, terminate immediately with `termination_reason: "user_stop"` and report to the user. Do NOT call `ScheduleWakeup`.
+- If `.harness/STOP` exists, terminate immediately with `termination_reason: "user_stop"`. If `state.json` exists, **archive (see §8)** before removing it; also remove `.harness/STOP`. Report to the user. Do NOT call `ScheduleWakeup`.
+- If `.harness/state.json` exists but its `phase` is `complete` or `needs_user` (i.e., a stale archive from a previous cycle that wasn't cleaned up — should not normally happen because termination archives + deletes, see §8): archive it to `.harness/history/` as if terminating now (append to `INDEX.json`, write `<id>-<verdict>.json`), then delete it. Treat this as the "state.json does not exist" branch below.
 - If `.harness/state.json` does not exist, initialize a new cycle from `$ARGUMENTS`:
   - Strip any leading `--verification=<pick>` flag and capture the value (see below); the rest of `$ARGUMENTS` becomes `user_request` verbatim.
-  - Write `state.json` with `phase: "designing"`, `cycle_id: 1`, `retry_count: 0`, `retry_limit: 5`.
+  - Write `state.json` with `phase: "designing"`, `cycle_id: 1`, `retry_count: 0`, `retry_limit: 5`, `attempt_history: []`.
   - Set `verification_spec` based on the captured flag:
     - `--verification=auto` (or no flag) → `[]` (Designer will pick later)
     - `--verification=manual` → `["manual"]` sentinel; Verifier will skip its dynamic phase and the cycle ends with a "please verify" message
@@ -63,9 +64,20 @@ All persistent state lives in the host project's `.harness/` directory.
   "verification_spec": [],
   "verifier_result": null,
   "rule_applier_result": null,
-  "termination_reason": null
+  "termination_reason": null,
+  "attempt_history": [
+    {
+      "attempt": 1,
+      "designer_spec": { ... },
+      "completed_workers": [...],
+      "verifier_result": { ... },
+      "failure_reason": "<one-line summary>"
+    }
+  ]
 }
 ```
+
+`attempt_history` accumulates one entry per **failed** re-plan attempt within this cycle. On Verifier or Executor failure within retry budget, the current attempt's snapshot (designer spec, completed workers, verifier result, single-line failure reason) is pushed before `active_workers`/`completed_workers` are cleared for the next re-plan. The successful (final) attempt is reflected in the live `completed_workers` + `verifier_result` fields and is **not** duplicated into `attempt_history`. This array is the cycle's failure trail; it is the data `/harness-replay` renders as the per-attempt timeline.
 
 `verification_spec` is the list of check IDs Verifier will execute in its dynamic phase. Set in one of three ways:
 - Designer picks from `.harness/verification-checks.yaml` during designing (default `auto` flow).
@@ -91,6 +103,28 @@ Project-local extensions for Rule-Applier. Honored by Rule-Applier directly.
 ### `.harness/verification-checks.yaml` (optional)
 
 Project-local library of runtime verification checks (api-contract, ui-smoke, playwright e2e, etc.). Read by Designer to pick per-cycle `verification_spec`, then executed by Verifier in its dynamic phase. Honored by Designer and Verifier directly.
+
+### `.harness/history/` (cycle archive)
+
+When a cycle terminates (success or `needs_user`), its final `state.json` is archived here and the live `state.json` is removed so the next user request starts a fresh cycle. Two files are written per terminated cycle:
+
+- `<id>-<verdict>.json` — full snapshot of the final `state.json`. `<id>` is `c-YYYY-MM-DD-HHMM` (derived from `cycle_started_at`); `<verdict>` is one of `complete`, `needs_user`. Example: `.harness/history/c-2026-05-18-1432-complete.json`.
+- `INDEX.json` — a single JSON array of summary entries, appended on each archive. Each entry:
+  ```json
+  {
+    "id": "c-2026-05-18-1432",
+    "verdict": "complete",
+    "termination_reason": "success",
+    "request": "<verbatim user_request>",
+    "executors": ["frontend", "api"],
+    "retry_count": 0,
+    "started_at": "<cycle_started_at ISO-8601>",
+    "finished_at": "<termination ISO-8601>",
+    "elapsed_sec": 132
+  }
+  ```
+
+`INDEX.json` is the cheap listing surface — `/harness-history` reads only this file. Detailed timelines (`/harness-replay <id>`) read the corresponding `<id>-*.json`. The archive directory should be added to `.gitignore` (it is local runtime state, like `state.json` itself).
 
 ---
 
@@ -123,7 +157,7 @@ Activation happens in one of two ways:
 
 On activation, before the first iteration:
 1. Ensure `.harness/` directory exists.
-2. Initialize `state.json` with `phase: "designing"`, `cycle_id: 1`, `retry_count: 0`, `user_request: <verbatim>`.
+2. Initialize `state.json` with `phase: "designing"`, `cycle_id: 1`, `retry_count: 0`, `attempt_history: []`, `user_request: <verbatim>`.
 3. Proceed into the first iteration.
 
 ---
@@ -136,7 +170,7 @@ On activation, before the first iteration:
    - Input: current `user_request` + the most recent failure report (if `retry_count > 0`) + a flag indicating whether `verification_spec` is already populated.
    - If `verification_spec` is already populated (from a `--verification=` activation arg, including the `["manual"]` sentinel), tell Designer to **skip** verification picking and only emit `{"executors": [...]}`. Designer should not re-pick.
 2. Designer returns either a `{"executors": [...], "verification": [...]}` object or `{"escalate": true, "reason": "..."}`. Tolerate the legacy plain-array form by treating it as `{executors: <array>, verification: []}`.
-3. If escalate: set `phase: "needs_user"`, `termination_reason: "designer_escalation"`. Report to user. Do NOT call ScheduleWakeup.
+3. If escalate: set `phase: "needs_user"`, `termination_reason: "designer_escalation"`. **Archive (see §8)** then report to user. Do NOT call ScheduleWakeup.
 4. Else: store specs. Take the first `min(len(executors), 4)` into `active_workers` (concurrency cap = 4). Push the rest into `pending_specs`. If `verification_spec` is still empty AND Designer returned a `verification` list, store it. If `verification_spec` was already populated from activation, keep it as-is — Designer's picks are ignored. Append the dispatch to `designer_history`.
 5. Move to `phase: "executing"`. Continue same turn into the executing phase (no need to wait).
 
@@ -184,11 +218,13 @@ On activation, before the first iteration:
      ...
    Please verify manually (browser, smoke command, whatever fits) and let me know if anything looks wrong.
    ```
-7. Do NOT call ScheduleWakeup. The Ralph loop exits.
+7. Set `phase: "complete"`, `termination_reason: "success"`.
+8. **Archive (see §8)** — ships the cycle to `.harness/history/` and deletes `state.json`.
+9. Do NOT call ScheduleWakeup. The Ralph loop exits.
 
 ### Phase: `complete` / `needs_user`
 
-Terminal. Iteration is a no-op. The loop has exited (no ScheduleWakeup). State.json is preserved for inspection / `/harness-status`.
+Terminal. Iteration is a no-op. Under normal operation `state.json` has already been archived and removed at the moment of termination (see §8), so this branch only fires when the archive step was skipped or interrupted. In that case, archive + remove `state.json` here as a safety net, then exit.
 
 ---
 
@@ -217,13 +253,28 @@ When an executor or the verifier reports failure:
 
 1. Increment `retry_count`.
 2. If `retry_count > retry_limit` (default 5):
+   - First push the latest failure into `attempt_history` (same shape as step 3.1) — the limit-exceeding attempt must be captured before termination.
    - Set `phase: "needs_user"`, `termination_reason: "retry_limit"`.
-   - Report to user the full retry history (each cycle's designer plan and what failed). Present options:
+   - **Archive (see §8)** so `attempt_history` is preserved for `/harness-replay`.
+   - Report to user the full retry history (each cycle's designer plan and what failed; pull this from `attempt_history` rather than relying on context, since the archive is now authoritative). Present options:
      1. Increase the retry limit and continue.
      2. Stash the current changes and let the user take over.
      3. Discard the work (revert).
    - Do NOT call ScheduleWakeup.
-3. Else: clear `active_workers` (cancel any survivors with `TaskStop`); **preserve `completed_workers`** so Designer knows which work has already landed on disk and does not re-plan it. Move to `phase: "designing"`. Designer will be invoked with the failure report **plus the list of completed workers** so it can re-plan only what is missing.
+3. Else, snapshot the failed attempt then re-plan:
+   1. **Push to `attempt_history`** (BEFORE clearing anything):
+      ```json
+      {
+        "attempt": <current retry_count, pre-increment value — so the first failure is attempt 1>,
+        "designer_spec": <last entry in designer_history>,
+        "completed_workers": <current completed_workers array>,
+        "verifier_result": <current verifier_result, may be null if executor failed first>,
+        "failure_reason": "<single-line summary: verifier mismatch / dynamic_check id / executor error>"
+      }
+      ```
+   2. Clear `active_workers` (cancel any survivors with `TaskStop`).
+   3. **Preserve `completed_workers`** so Designer knows which work has already landed on disk and does not re-plan it.
+   4. Move to `phase: "designing"`. Designer will be invoked with the failure report **plus the list of completed workers** so it can re-plan only what is missing.
 
 ---
 
@@ -247,7 +298,36 @@ The cycle terminates in any of these states. All set a `termination_reason` and 
 - `phase: "complete"` — normal success.
 - `phase: "needs_user"` — designer escalation, retry-limit exceeded, kill-switch file (`.harness/STOP`), or any unrecoverable error.
 
-On termination, report a structured summary to the user:
+### Archive step (call once per cycle, at every termination path)
+
+Before reporting the summary, archive the cycle so it survives the next request:
+
+1. Derive `id` from `cycle_started_at`: format `c-YYYY-MM-DD-HHMM` (UTC). Example: `c-2026-05-18-1432`. If two cycles in the same minute collide (rare), append `-2`, `-3`, etc.
+2. Derive `verdict`: `"complete"` if `phase == "complete"`, else `"needs_user"`.
+3. Compute `finished_at` (now, ISO-8601) and `elapsed_sec` (`finished_at - cycle_started_at`).
+4. Write the full current `state.json` content to `.harness/history/<id>-<verdict>.json`. Create the `.harness/history/` directory if missing.
+5. Append a summary entry to `.harness/history/INDEX.json` (create as `[]` if missing):
+   ```json
+   {
+     "id": "<id>",
+     "verdict": "<verdict>",
+     "termination_reason": "<from state.json>",
+     "request": "<user_request truncated to ~200 chars>",
+     "executors": ["<domain or executor for each entry in completed_workers>"],
+     "retry_count": <from state.json>,
+     "started_at": "<cycle_started_at>",
+     "finished_at": "<finished_at>",
+     "elapsed_sec": <elapsed>
+   }
+   ```
+   Append, do not rewrite the whole array — read existing, push, write back.
+6. **Delete `.harness/state.json`** so the next user request starts a fresh cycle.
+
+If archive fails (disk full, permission denied, etc.), still report the summary to the user — never leave them in the dark — but include a single line noting the archive failure and the original `state.json` path so they can keep it manually.
+
+### Summary report
+
+After archiving, report to the user:
 
 ```
 Cycle: <id>
@@ -257,6 +337,7 @@ Workers executed: <N>
 Verifier: <pass | fail | n/a>
 Rule-Applier: <summary>
 Final diff: <stat summary>
+Archived: .harness/history/<id>-<verdict>.json
 ```
 
 ---
