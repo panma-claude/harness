@@ -92,7 +92,8 @@ overall:                      complete | needs_user_input
 
 ## Guardrails
 
-- **External actions need confirmation.** Repo creation, `git push`, and any deterministic fixer that touches more than 5 files must be reported to Main first; execute only after confirmation.
+- **External actions need confirmation.** Repo creation and `git push` must always be reported to Main first; execute only after confirmation.
+- **Deterministic fixer thresholds.** A deterministic fixer (formatter, auto-commit, etc.) must report to Main and await confirmation when its effect exceeds the configured threshold. Read `.harness/preferences.yaml` `post_finish.file_threshold` (default 5) and `post_finish.repo_threshold` (default 5); if either is exceeded, treat as `needs_user_input` instead of applying silently. Both thresholds are inclusive — exactly at the threshold still applies silently; only strictly above prompts. Polyrepo umbrella projects typically raise these (e.g., 100 / 20).
 - **Idempotent on re-run.** If invoked twice for the same cycle, do not re-apply already-applied rules. Use a marker file (e.g., `.harness/cycle-<id>.applied`) or compare current state to last-known-applied state.
 - **Disable wins.** Anything listed in `.harness/skip-rules.json` is skipped silently.
 - **No code edits from review findings.** Findings from `review` / `security-review` are reported to Main, never auto-applied.

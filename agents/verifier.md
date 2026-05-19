@@ -36,6 +36,11 @@ New config keys must be both declared (in config files) and read (in code). Remo
 ### 6. Imports / module references
 Removed exports must not still be imported. Renamed exports must be renamed at every import site.
 
+### 7. Build artifact existence (sanity)
+For each executor report with `build_result: pass` AND a non-empty `artifacts` list: confirm each listed path exists in the working tree (`test -e <path>`). If any artifact path is missing, record a mismatch — `kind: missing_artifact`, `location: <path>`, `detail: "executor <domain> reported build pass but artifact <path> does not exist"`. This catches the case where an executor incorrectly self-reports build success (e.g., ran the wrong target, build silently failed, or the artifact location moved).
+
+Executors that omit `artifacts` (or report `build_result: n/a`) are not checked here. The check is opt-in via the report.
+
 Collect any mismatches into `mismatches[]` in the report.
 
 ## Phase 2 — Project-defined runtime checks (run only when spec lists them)

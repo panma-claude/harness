@@ -354,9 +354,12 @@ status:        completed | failed | partial
 changes:       [<file>, ...]
 build_result:  pass | fail | n/a
 test_result:   pass | fail | skipped | n/a
+artifacts:     [<built-output-path>, ...]   # optional; see below
 elapsed:       <seconds>
 notes:         <free-form 0-3 lines>
 \`\`\`
+
+When `build_result: pass`, list any on-disk outputs in `artifacts` (jar, dist directory, compiled binary, etc.) so the Verifier can sanity-check they exist. Omit (or leave empty) when there is no on-disk artifact (typecheck-only, etc.).
 
 ## Guardrails
 

@@ -31,3 +31,17 @@
 #                  harness's choices.
 
 mode: auto
+
+# Optional — threshold for deterministic post-finish rules (formatters,
+# auto-commit, etc.) before Rule-Applier asks the user for confirmation.
+# If a rule's effect exceeds EITHER threshold, Rule-Applier returns
+# `needs_user_input` instead of applying silently.
+#
+# Defaults (when this block is omitted): file=5, repo=5. The defaults are
+# intentionally conservative — they exist as a safety net for projects
+# that have not tuned. Polyrepo / nested-clones umbrella projects almost
+# always want to raise these (a normal cycle touches dozens of files
+# across many nested repos).
+post_finish:
+  file_threshold: 100   # changed files in a single deterministic rule
+  repo_threshold: 20    # nested repos touched in a single deterministic rule

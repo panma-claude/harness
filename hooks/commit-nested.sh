@@ -15,7 +15,26 @@
 
 set -u
 
-root="$(pwd)"
+# Resolve the umbrella project root by walking up from CWD looking for a
+# `.harness/` marker. CWD is not reliable — Main's hooks may chdir, and the
+# user can invoke this from a sub-directory or even from inside a nested
+# repo. `.harness/` is always at the umbrella root by definition.
+root=""
+dir="$(pwd)"
+while [ "$dir" != "/" ] && [ -n "$dir" ]; do
+  if [ -d "$dir/.harness" ]; then
+    root="$dir"
+    break
+  fi
+  dir="$(dirname "$dir")"
+done
+
+if [ -z "$root" ]; then
+  echo "commit-nested: could not locate .harness/ in any ancestor of $(pwd)" >&2
+  exit 2
+fi
+
+cd "$root" || exit 2
 
 # Derive a commit message.
 msg="${1:-}"

@@ -138,9 +138,12 @@ status:        completed | failed | partial
 changes:       [<file>, <file>, ...]
 build_result:  pass | fail | n/a
 test_result:   pass | fail | skipped | n/a
+artifacts:     [<built-output-path>, ...]   # optional, see notes
 elapsed:       <seconds>
 notes:         <free-form 0-3 lines>
 ```
+
+`artifacts` is optional. When `build_result: pass`, executors should list on-disk outputs the build is supposed to have produced (e.g. `target/foo.jar`, `dist/`). Verifier sanity-checks that these paths exist without re-running the build. Skip when there is no on-disk output to check (typecheck-only, interpreted languages without bundling, etc.).
 
 ## On re-plan
 

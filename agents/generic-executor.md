@@ -43,9 +43,12 @@ status:        completed | failed | partial
 changes:       [<file>, ...]
 build_result:  pass | fail | n/a
 test_result:   pass | fail | skipped | n/a
+artifacts:     [<built-output-path>, ...]   # optional; see below
 elapsed:       <seconds>
 notes:         <free-form 0-3 lines>
 ```
+
+The `artifacts` field is **optional but recommended** when `build_result: pass`. List paths the build is supposed to have produced (jar, dist dir, compiled binary, generated source, etc.) — relative to the project root. Verifier uses this to sanity-check that the build actually produced what it claimed, without re-running the build. Skip the field (or leave empty) when there is no on-disk artifact to point at (e.g., typecheck-only runs, interpreter-only languages without bundling).
 
 ## Guardrails
 
