@@ -132,35 +132,47 @@ Surface this as its own checkbox in step 4 so the user can opt out cleanly.
 
 ## 3e. Detect verification-checks.yaml candidacy
 
-`verification-checks.yaml` is just a list of shell commands the Verifier runs as the **cross-cutting check** between domains. It does not require any specific testing framework — a `curl + bash` script, a `psql -c "..."`, a custom CLI, or anything else that exits 0/nonzero is fine.
+`verification-checks.yaml` is the project's persistent library of cross-cutting verification checks. Each entry is a shell command the Verifier runs when its `applicable_when` clauses match the cycle's changes. It does not require any specific testing framework — a `curl + bash` script, `psql -c "..."`, a custom CLI, or anything else that exits 0/nonzero is fine.
 
-**Trigger:** propose the file whenever **2+ executors will exist after this init run** (existing + newly proposed), AND the file does not already exist. Multi-domain projects almost always benefit from at least one cross-cutting check.
+**Trigger:** propose the file whenever **2+ executors will exist after this init run** (existing + newly proposed), AND the file does not already exist.
 
-**What to put in the proposal:**
+**What to put in the proposal — keep it minimal.** Per-cycle suggestions during execution (see `/harness-iterate`'s candidate picker) are how this library naturally fills in. `/harness-init` should NOT try to guess project-specific check commands; stack predictions made at init time go stale and create silent-failure modes when placeholders are left unfilled.
 
-1. **One always-on scaffold entry per executor pair worth checking** — id like `cross-cutting-smoke`, with `cmd: <your-cross-cutting-check-command>` as a placeholder the user fills in. `applicable_when.changed` lists the executors' output globs so it triggers when those areas change.
+The proposal:
 
-2. **Tool-derived entries (bonus)** — if any of these signals fire, add concrete entries on top of the scaffold:
+```yaml
+# panma-harness — verification checks library
+#
+# This file is intentionally empty at init time. /harness-iterate proposes
+# per-cycle verification candidates based on the actual changes being made;
+# answering "yaml 영구 등록" in the cycle picker appends entries here.
+#
+# Each entry takes the shape:
+#   - id: <short-stable-id>
+#     cmd: <shell command — exit 0 = pass>
+#     timeout: <seconds>
+#     applicable_when:
+#       changed: ["<glob>", ...]      # any executor output overlap triggers
+#       user_hint: ["<keyword>", ...] # case-insensitive substring in user request triggers
+#
+# See harness/examples/verification-cmd-cookbook.md for stack-specific cmd examples.
 
-| Signal | Suggested entry |
+checks: []
+```
+
+**Tool-derived bonus entries (optional).** If any of these signals fire at the project root, you may pre-fill one or two entries — but only when the cmd is fully concrete and runnable as-is. These are not required; an empty `checks: []` is a fine init.
+
+| Signal | Suggested entry (cmd must be runnable as-is) |
 |---|---|
-| `playwright.config.{ts,js,mjs}` at any depth ≤ 3 | `id: ui-smoke` (smoke-tagged subset) + `id: ui-full` (whole suite, gated by `user_hint`) |
-| `cypress.config.{ts,js}` | `id: ui-smoke` (cypress flavor) |
-| `**/test/contract/**` or `**/test/api/**` directories | `id: api-contract` |
-| `vitest.config.*` / `jest.config.*` with an `integration` project | `id: integration` |
-| `**/e2e/**` directory with test files | `id: e2e` (gated by `user_hint`) |
-| `**/*IT.java` (Spring integration test convention) | `id: integration` with the project's build wrapper (`./gradlew integrationTest` etc.) |
-| `**/*.feature` (Karate / Cucumber) | `id: bdd-smoke` |
-| `**/*.postman_collection.json` | `id: postman-smoke` (Newman runner) |
-| `bin/*smoke*.sh` or `scripts/*smoke*.sh` | `id: smoke-script` |
+| `playwright.config.{ts,js,mjs}` at any depth ≤ 3 | `id: ui-smoke`, cmd `npx playwright test --grep @smoke`, gated by user_hint `playwright` |
+| `cypress.config.{ts,js}` | `id: ui-smoke`, cmd `npx cypress run --spec '**/*smoke*'`, gated by user_hint `cypress` |
+| `**/*.postman_collection.json` at depth ≤ 3 | `id: postman-smoke`, cmd `newman run <path>`, gated by user_hint |
+| `bin/*smoke*.sh` or `scripts/*smoke*.sh` (executable) | `id: smoke-script`, cmd `bash <path>` |
+| `Makefile` with a `smoke:` target | `id: make-smoke`, cmd `make smoke` |
 
-For each entry:
-- `cmd` derived from the signal (or placeholder for scaffold entries).
-- `timeout` proportional to scope (smoke ≈ 300s, full e2e ≈ 1200s).
-- `applicable_when.changed` matching the executor outputs the check covers.
-- `applicable_when.user_hint` for heavy checks so the user can force them.
+Skip the entry if its cmd would require user fill-in. Those candidates are better surfaced per-cycle by `/harness-iterate`.
 
-**Skip only if** there's just one executor (no cross-cutting to check) or the file already exists. Otherwise propose at least the scaffold and let the user fill in the cmd.
+**Skip the entire proposal if:** there's just one executor (no cross-cutting to check) or the file already exists.
 
 ## 4. Present the plan to the user
 
@@ -210,15 +222,9 @@ Optional: auto-commit to nested repos (polyrepo-only feature)
     creates one commit per nested repo that has changes
     commit message derived from the cycle's user_request
 
-Proposed verification-checks.yaml (cross-cutting check library, Designer picks per cycle):
-  - id: cross-cutting-smoke    ← scaffold; fill in cmd yourself
-      cmd: <your-cross-cutting-check-command>
-      timeout: 300
-      applicable_when: changed <executor-output-globs>
-  - id: <tool-derived-id>      ← only when a specific tooling signal fired
-      cmd: <derived-command>
-      timeout: <seconds>
-      applicable_when: <derived-criteria>
+Proposed verification-checks.yaml (cross-cutting check library — starts empty; harness-iterate fills it per cycle as you accept candidates):
+  checks: []          ← intentionally empty at init
+  + 0~N tool-derived entries (only when cmd is concrete and runnable, e.g. playwright/cypress/Makefile signals detected)
 
 Other agents (not managed by harness):
   - <name>

@@ -10,6 +10,7 @@ They live inside the installed plugin (read-only). When you want to enable one o
 | `post-finish.md.example`          | `.harness/post-finish.md`          | Extra project-specific finishers (formatters, changelogs, custom checks) |
 | `verification-checks.yaml.example` | `.harness/verification-checks.yaml` | Runtime check library (api-contract, ui-smoke, playwright e2e, ...) — Designer picks per cycle, Verifier executes |
 | `preferences.yaml.example`         | `.harness/preferences.yaml`         | Activation mode: `auto` (silent), `confirm` (show triage decision), `interactive` (also ask verification choice upfront) |
+| `verification-cmd-cookbook.md`     | (read in place — reference only)     | Reference: concrete `cmd` snippets for `verification-checks.yaml` across common stacks (Maven, Gradle, npm, docker compose, terraform, Spring Boot, playwright, etc.) |
 
 ## How to use
 

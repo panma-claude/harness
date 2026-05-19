@@ -12,6 +12,7 @@ Main calls you with:
 - A list of executor reports (each contains: `domain`, `status`, `changes`, ...).
 - Access to all diffs via `git diff` and direct file reads.
 - A `verification_spec`: a (possibly empty) list of check IDs the Designer selected for this cycle, drawn from `.harness/verification-checks.yaml` if present.
+- A `verification_ephemeral` (possibly empty) list of inline check objects the user accepted as "이번만 실행" in `/harness-iterate`'s candidate picker. Each entry has `{id, cmd, applicable_when, timeout}` supplied directly — no yaml lookup needed.
 
 ## Phase 1 — Static cross-cutting checks (always run)
 
@@ -39,27 +40,31 @@ Collect any mismatches into `mismatches[]` in the report.
 
 ## Phase 2 — Project-defined runtime checks (run only when spec lists them)
 
-**Special case — `verification_spec == ["manual"]`:** The user chose to verify the cycle's changes themselves (interactive mode). Skip Phase 2 entirely. Emit `dynamic_checks: []` and put `notes: "deferred_to_user"` in the report. Static phase (above) still runs — that part is not optional.
+**Special case — `verification_spec == ["manual"]`:** The user chose to verify the cycle's changes themselves (interactive mode). Skip Phase 2 entirely. Emit `dynamic_checks: []` and put `notes: "deferred_to_user"` in the report. Static phase (above) still runs — that part is not optional. `verification_ephemeral` is also ignored in this special case.
 
-Otherwise, if `verification_spec` is non-empty:
+Otherwise, build the full execution list as the union of:
+- yaml-resolved entries from `verification_spec` (look up `.harness/verification-checks.yaml` for each id), AND
+- inline entries from `verification_ephemeral` (one-shot, no yaml lookup needed).
 
-1. Read `.harness/verification-checks.yaml`. (If it doesn't exist while spec is non-empty, that's a config error — report `dynamic_checks` entry with `status: skipped`, reason "verification-checks.yaml missing".)
-2. For each `id` in `verification_spec`:
-   - **Before running:** write `.harness/verifier-progress.json` with:
-     ```json
-     {
-       "current": "<id>",
-       "started_at": "<ISO-8601 now>",
-       "completed": [<ids finished so far>],
-       "total": <len(verification_spec)>
-     }
-     ```
-     This is read by the statusline (panma-hud) to show live progress. The file is local runtime state, expected to be in `.gitignore`, and is cleaned up by Main when the cycle terminates.
-   - Look up the matching entry in `checks[]`.
-   - If not found: record `status: skipped`, reason "id not in library".
-   - Else: execute `cmd` in the entry's `cwd` (default project root) with the `timeout` (default 300s).
-   - Record `status: pass | fail | timeout`, `duration` (seconds), and the last ~20 lines of output (or a summary if huge).
-3. Do **not** run anything not listed in `verification_spec`. The Designer's (or user's) selection is authoritative for this cycle.
+Then for each entry in the union:
+
+1. **Before running:** write `.harness/verifier-progress.json` with:
+   ```json
+   {
+     "current": "<id>",
+     "started_at": "<ISO-8601 now>",
+     "completed": [<ids finished so far>],
+     "total": <total count: verification_spec + verification_ephemeral>
+   }
+   ```
+   This is read by the statusline (panma-hud) to show live progress. The file is local runtime state, expected to be in `.gitignore`, and is cleaned up by Main when the cycle terminates.
+2. For yaml-resolved entries: look up the matching entry in `checks[]`. If not found: record `status: skipped`, reason "id not in library". (If `verification_spec` is non-empty but the yaml file doesn't exist, treat as config error — record `status: skipped`, reason "verification-checks.yaml missing".) For inline entries: use the supplied `cmd` / `cwd` / `timeout` directly.
+3. **Placeholder check.** If the resolved `cmd` contains the marker `<FILL:`, do NOT execute. Record `status: skipped`, reason "cmd is placeholder — fill before use". The user knowingly persisted this; the skip is the signal to go fill it in.
+4. Else: execute `cmd` in the entry's `cwd` (default project root) with the `timeout` (default 300s).
+5. Record `status: pass | fail | timeout`, `duration` (seconds), and the last ~20 lines of output (or a summary if huge).
+6. Mark inline-source entries with `source: "ephemeral"` in the per-check report so Rule-Applier and Main can identify them.
+
+Do **not** run anything not listed in either source. The cycle's selection is authoritative.
 
 After all checks complete (or one fails and you stop early), leave `.harness/verifier-progress.json` as-is. Main's archive step deletes it; do not delete it yourself.
 
@@ -82,6 +87,7 @@ mismatches:
   - ...
 dynamic_checks:
   - id:       <check id>
+    source:   library | ephemeral
     status:   pass | fail | timeout | skipped
     duration: <seconds>
     output:   |

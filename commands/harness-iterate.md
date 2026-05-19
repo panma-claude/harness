@@ -62,6 +62,7 @@ All persistent state lives in the host project's `.harness/` directory.
   ],
   "pending_specs": [],
   "verification_spec": [],
+  "verification_ephemeral": [],
   "verifier_result": null,
   "rule_applier_result": null,
   "termination_reason": null,
@@ -79,10 +80,16 @@ All persistent state lives in the host project's `.harness/` directory.
 
 `attempt_history` accumulates one entry per **failed** re-plan attempt within this cycle. On Verifier or Executor failure within retry budget, the current attempt's snapshot (designer spec, completed workers, verifier result, single-line failure reason) is pushed before `active_workers`/`completed_workers` are cleared for the next re-plan. The successful (final) attempt is reflected in the live `completed_workers` + `verifier_result` fields and is **not** duplicated into `attempt_history`. This array is the cycle's failure trail; it is the data `/harness-replay` renders as the per-attempt timeline.
 
-`verification_spec` is the list of check IDs Verifier will execute in its dynamic phase. Set in one of three ways:
-- Designer picks from `.harness/verification-checks.yaml` during designing (default `auto` flow).
-- Pre-populated from `--verification=<pick>` activation arg when the user chose explicitly via the interactive mode (Designer skips picking).
-- Sentinel `["manual"]` — user opted to verify themselves; Verifier skips dynamic phase entirely, and the cycle's final report includes a "please verify" prompt with the changed files.
+`verification_spec` is the list of check IDs Verifier will execute in its dynamic phase. Each entry is either:
+- a string id referring to an entry in `.harness/verification-checks.yaml`, or
+- the sentinel `"manual"` (when user opted to verify themselves; Verifier skips dynamic phase entirely).
+
+It is set in one of three ways:
+- Designer picks from `.harness/verification-checks.yaml` during designing (default `auto` flow), plus user-promoted candidates from the cycle-start picker (§4 designing).
+- Pre-populated from `--verification=<pick>` activation arg when the user chose explicitly via the interactive mode (Designer skips picking and the candidate picker is skipped).
+- Sentinel `["manual"]` — user opted to verify themselves; the cycle's final report includes a "please verify" prompt with the changed files.
+
+`verification_ephemeral` is the list of one-shot checks the user chose to run *this cycle only* (not persisted to yaml). Each entry is a full inline check object `{id, cmd, applicable_when, timeout}`. Verifier executes these in addition to the yaml-resolved `verification_spec` entries. Cleared on cycle termination.
 
 `verification_user_skip` (optional bool) — when true, both Designer and Verifier treat the empty `verification_spec` as "user said skip", not "no checks defined".
 
@@ -187,11 +194,53 @@ On activation, before the first iteration:
 
 1. Dispatch the **designer** subagent (foreground Task, not background).
    - Input: current `user_request` + the most recent failure report (if `retry_count > 0`) + a flag indicating whether `verification_spec` is already populated.
-   - If `verification_spec` is already populated (from a `--verification=` activation arg, including the `["manual"]` sentinel), tell Designer to **skip** verification picking and only emit `{"executors": [...]}`. Designer should not re-pick.
-2. Designer returns either a `{"executors": [...], "verification": [...]}` object or `{"escalate": true, "reason": "..."}`. Tolerate the legacy plain-array form by treating it as `{executors: <array>, verification: []}`.
+   - If `verification_spec` is already populated (from a `--verification=` activation arg, including the `["manual"]` sentinel), tell Designer to **skip** verification picking AND skip the candidate-suggestion step. Designer should emit only `{"executors": [...]}`.
+2. Designer returns either a `{"executors": [...], "verification": [...], "verification_candidates": [...]}` object or `{"escalate": true, "reason": "..."}`. Tolerate the legacy plain-array form by treating it as `{executors: <array>, verification: [], verification_candidates: []}`. The `verification_candidates` field is optional and may be absent or empty.
 3. If escalate: set `phase: "needs_user"`, `termination_reason: "designer_escalation"`. **Archive (see §8)** then report to user. Do NOT call ScheduleWakeup.
 4. Else: store specs. Take the first `min(len(executors), 4)` into `active_workers` (concurrency cap = 4). Push the rest into `pending_specs`. If `verification_spec` is still empty AND Designer returned a `verification` list, store it. If `verification_spec` was already populated from activation, keep it as-is — Designer's picks are ignored. Append the dispatch to `designer_history`.
-5. Move to `phase: "executing"`. Continue same turn into the executing phase (no need to wait).
+5. **Run the candidate picker** (§4-candidate-picker) if all of: (a) this is the first design attempt (`retry_count == 0`), (b) `verification_spec` was NOT pre-populated from activation, (c) `verification_user_skip` is not true, (d) Designer returned a non-empty `verification_candidates` list. Otherwise skip.
+6. Move to `phase: "executing"`. Continue same turn into the executing phase (no need to wait).
+
+### §4-candidate-picker: present new verification suggestions to the user
+
+The picker turns Designer's `verification_candidates` into a 3-way user decision per candidate. It runs once, in the first design pass of a cycle, **regardless of `mode:` in preferences.yaml** — verification is too consequential to skip on auto mode.
+
+Steps:
+
+1. **Build the question batch.** For each candidate (cap at 4 per batch — split into multiple `AskUserQuestion` calls if more), create one question:
+
+   - `question`: `"<candidate.id> 검증 — <candidate.rationale> (cmd: <truncated cmd, <FILL: ...> shown verbatim>)"`
+   - `header`: short label, e.g. `"backend build"` (≤12 chars; truncate id if needed)
+   - `multiSelect`: false
+   - `options`:
+     - `{ label: "이번만 실행", description: "이 cycle 의 Verifier 가 실행. yaml 미수정." }`
+     - `{ label: "yaml 영구 등록", description: "verification-checks.yaml 에 append + 이번 cycle 도 실행. 미래 cycle 자동." }`
+     - `{ label: "skip", description: "이번 cycle 미실행, yaml 미수정." }`
+
+   Order the candidates with `source: "auto"` first (cleaner cmd, easier to accept), `source: "fill_needed"` last.
+
+2. **Pick the default option for each candidate.** Set the first option (the recommended default that AskUserQuestion shows first) based on `source`:
+   - `auto` → put `"yaml 영구 등록"` first (recommended)
+   - `fill_needed` → put `"skip"` first (cmd needs filling before it can run; user must promote intentionally)
+
+3. **Collect answers.** Iterate the batches; each `AskUserQuestion` call returns the user's selection per question.
+
+4. **Apply selections.** For each candidate, based on the answer:
+
+   - **"yaml 영구 등록"**: append the candidate as a new entry to `.harness/verification-checks.yaml` under `checks:`. Use the candidate's `id`, `cmd`, `applicable_when`, `timeout`. Add a one-line comment above the entry: `# added by harness-iterate cycle <cycle_id> on <ISO date>`. Create the file with a top-level `checks:` key if it does not exist. De-dup by `id` (skip silently if id already present). Also push the `id` into `verification_spec` so this cycle runs it.
+
+   - **"이번만 실행"**: do NOT modify yaml. Push the full inline check object `{id, cmd, applicable_when, timeout}` into `verification_ephemeral` (a new state.json field — see §1). Verifier will execute these in its dynamic phase in addition to the `verification_spec` entries.
+
+   - **"skip"**: do nothing.
+
+5. **Validate `<FILL: ...>` placeholders.** Before persisting/executing, scan each chosen candidate's `cmd` for the pattern `<FILL:`. If found:
+   - If user chose **"이번만 실행"** or **"yaml 영구 등록"**, surface a single-line warning to the user (`AskUserQuestion` follow-up with one question: "<id>: cmd 가 placeholder 입니다. 직접 채우러 가시겠습니까?" with options `[Yes, 채우러 가기 — yaml 열기 / Just skip this cycle / Persist as-is]`). The Yes path opens the yaml in the user's editor (best-effort — just print the path; user opens it).
+   - On `"Just skip"`, undo the apply for this candidate.
+   - On `"Persist as-is"`, keep the placeholder. Verifier will skip the check at runtime (placeholder cmd does not execute).
+
+6. **Update state.json.** Persist the new `verification_spec`, `verification_ephemeral`, and (if any) the on-disk yaml change. Proceed to step 6 of the parent flow (move to executing).
+
+The picker is **not** a phase. It's a sub-step of designing that runs once per cycle, synchronously, before executors dispatch.
 
 ### Phase: `executing`
 
@@ -210,8 +259,9 @@ On activation, before the first iteration:
 ### Phase: `verifying`
 
 1. Dispatch the **verifier** subagent (foreground Task).
-   - Input: `completed_workers` reports + access to the working tree + the current `verification_spec`.
-   - If `verification_spec` is `["manual"]`, tell Verifier to run **only** its static phase and emit `dynamic_checks: []` with a `status: deferred_to_user` note in `notes`. Verifier still executes the 6 static cross-cutting checks; that part is not optional.
+   - Input: `completed_workers` reports + access to the working tree + the current `verification_spec` + `verification_ephemeral`.
+   - Verifier resolves `verification_spec` ids against `.harness/verification-checks.yaml` (standard path) AND additionally runs every check object in `verification_ephemeral` inline (id, cmd, applicable_when, timeout supplied directly — no yaml lookup). Skip any check whose `cmd` contains `<FILL:` — emit `status: skipped_placeholder` for that entry.
+   - If `verification_spec` is `["manual"]`, tell Verifier to run **only** its static phase and emit `dynamic_checks: []` with a `status: deferred_to_user` note in `notes`. Verifier still executes the 6 static cross-cutting checks; that part is not optional. `verification_ephemeral` is ignored in manual mode.
 2. Verifier returns `{status: pass | fail, mismatches: [...], dynamic_checks: [...], notes: ...}`.
 3. Store in `verifier_result`.
 4. If `status: pass` → move to `phase: "finalizing"`, continue same turn.
@@ -220,15 +270,16 @@ On activation, before the first iteration:
 ### Phase: `finalizing`
 
 1. Dispatch the **rule-applier** subagent (foreground Task).
-   - Input: final cycle diff + `verifier_result`.
+   - Input: final cycle diff + `verifier_result` + `verification_ephemeral` (so it can suggest promotions).
 2. Rule-Applier returns its report. Store in `rule_applier_result`.
 3. If the report contains `overall: needs_user_input` (e.g., proposed repo registrations):
    - Present the proposals to the user (verbatim).
    - On user confirmation: re-invoke rule-applier with `confirmed_registrations: [...]`.
    - On user rejection: skip those registrations, mark them dismissed.
-4. Move to `phase: "complete"`.
-5. Report final summary to user (designer plan, worker results, verifier, rule-applier).
-6. **If `verification_spec` was `["manual"]`**, append a "Please verify" block to the final summary:
+4. If `rule_applier_result.verification_promotion` is non-empty, include a short suggestion section in the final summary listing those ids and a note: "다음 cycle 의 candidate picker 에서 동일 항목을 'yaml 영구 등록' 으로 선택하면 자동 추가됩니다." Do not prompt now — surfacing once is enough.
+5. Move to `phase: "complete"`.
+6. Report final summary to user (designer plan, worker results, verifier, rule-applier, verification promotion suggestions if any).
+7. **If `verification_spec` was `["manual"]`**, append a "Please verify" block to the final summary:
    ```
    Verification deferred to you.
    Changed files (N):
@@ -237,9 +288,9 @@ On activation, before the first iteration:
      ...
    Please verify manually (browser, smoke command, whatever fits) and let me know if anything looks wrong.
    ```
-7. Set `phase: "complete"`, `termination_reason: "success"`.
-8. **Archive (see §8)** — ships the cycle to `.harness/history/` and deletes `state.json`.
-9. Do NOT call ScheduleWakeup. The Ralph loop exits.
+8. Set `phase: "complete"`, `termination_reason: "success"`.
+9. **Archive (see §8)** — ships the cycle to `.harness/history/` and deletes `state.json`.
+10. Do NOT call ScheduleWakeup. The Ralph loop exits.
 
 ### Phase: `complete` / `needs_user`
 

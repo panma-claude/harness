@@ -95,8 +95,9 @@ user request
      │            (TaskOutput, TaskUpdate, TaskStop as needed)
      ▼
   Verifier   ──── 6 static cross-cutting checks (diff-only, read-only)
-     │            + any dynamic checks the Designer picked from
-     │              .harness/verification-checks.yaml (smoke, e2e, ...)
+     │            + any dynamic checks resolved from .harness/verification-checks.yaml
+     │            + any ephemeral checks the user accepted "just this cycle"
+     │              via the cycle-start candidate picker
      ▼
   Rule-Applier ── review skill, security skill, optional post-finish
      │            rules, optional repo registration
@@ -259,7 +260,7 @@ No example file needed — the format is the one line above.
 
 ### 2.4 Verification checks library
 
-Static cross-cutting checks (the six categories in `agents/verifier.md`) catch a lot, but they can't tell you whether the running system actually answers correctly after multiple domains changed. For that, define a **library of cross-cutting checks** and let the Designer pick the relevant ones per cycle.
+Static cross-cutting checks (the six categories in `agents/verifier.md`) catch a lot, but they can't tell you whether the running system actually answers correctly after multiple domains changed. For that, define a **library of cross-cutting checks** that the Designer picks from per cycle.
 
 A "check" is just a shell command — `curl + bash`, a `psql -c "..."`, a custom CLI, a Postman/Newman run, a `./gradlew integrationTest`, a `pnpm playwright`, anything that exits 0 on success and nonzero on failure. You do **not** need a specific testing framework.
 
@@ -277,13 +278,27 @@ Each entry has:
   - **`changed: [...]`** — globs to match against executor outputs. The check runs when a relevant area was touched.
   - Missing/empty `applicable_when` → always included.
 
-#### How the loop wires up
+The library starts empty after `/harness-init` — populating it is what the candidate picker (next subsection) is for.
+
+#### Per-cycle candidate picker (since v0.0.18)
+
+Init-time stack guessing creates silent-failure modes: a placeholder `cmd: <your-...>` left unfilled means dynamic verification is permanently off, and nothing reminds you. Instead, the harness asks **every cycle** what to verify, based on the actual changes about to land.
 
 Each cycle:
 
-1. **Designer** reads the library, picks IDs matching `user_hint` or `changed`, emits `verification: ["ui-smoke", "api-contract"]` alongside the executor specs.
-2. **Verifier** still runs its 6 static checks, then iterates the picked IDs and executes each. Aggregate `status: pass` only if all are pass/skipped.
-3. **On any failure**, the Designer re-plan receives both the static `mismatches` AND the failed `dynamic_checks[]` output — so it can fix the code, change the picks for the next try, or escalate.
+1. **Designer** plans executors AND inspects their planned outputs. From that, it emits two lists:
+   - `verification: [...]` — IDs already in your `verification-checks.yaml` whose `applicable_when` matches this cycle's changes (silent auto-include, current behavior).
+   - `verification_candidates: [...]` — *new* checks Designer thinks would be useful here, derived from change patterns (a `pom.xml` near changed `.java` files → `mvn compile`; a changed `@Configuration` class → "startup smoke" fill_needed candidate; a changed `docker-compose.yml` → `docker compose config`).
+2. **Main** presents the candidates with a 3-way picker per candidate:
+   - **이번만 실행** — run as one-shot for this cycle only. Not persisted.
+   - **yaml 영구 등록** — append to `verification-checks.yaml` AND run this cycle. Future cycles auto-pick when the glob matches.
+   - **skip** — neither runs nor persists.
+3. **Verifier** runs both the yaml-resolved spec entries and the inline ephemeral ones; reports them as `source: library` vs `source: ephemeral`.
+4. **Rule-Applier** at cycle end, if any ephemeral check passed, surfaces it as a promotion candidate ("this one worked, consider 영구 등록 next time").
+
+The picker runs regardless of `mode:` in preferences.yaml. Verification is too consequential to bypass on auto mode.
+
+For candidates whose `cmd` is project-specific (Designer can name the *category* but can't derive a working cmd — e.g., "how do you start your service?"), the candidate ships as a `<FILL: ...>` placeholder. Verifier skips placeholder cmds at runtime rather than failing; the skip is the signal that you need to fill it in. See `examples/verification-cmd-cookbook.md` for stack-specific cmd patterns when filling these in.
 
 #### Choosing what goes in the library
 
@@ -303,9 +318,9 @@ Three modes:
 
 | Mode | When activating | When choosing verification |
 |---|---|---|
-| `auto` (default) | Silent. Just runs. | Designer picks from `verification-checks.yaml`. |
-| `confirm` | Shows triage decision: "I think this is harness work because <reason>. Proceed?" | Designer picks. |
-| `interactive` | Same prompt as `confirm`. | After Proceed, also asks "How should I verify?" with options: **Auto-pick**, **Manual** (you verify yourself), each check id, **Skip dynamic**. |
+| `auto` (default) | Silent. Just runs. | Designer auto-picks library matches. **Candidate picker** runs at cycle start (see §2.4). |
+| `confirm` | Shows triage decision: "I think this is harness work because <reason>. Proceed?" | Same as auto: library auto + candidate picker. |
+| `interactive` | Same prompt as `confirm`. | After Proceed, asks "How should I verify?" upfront with options: **Auto-pick**, **Manual** (you verify yourself), each check id, **Skip dynamic**. When set explicitly, the candidate picker is bypassed for this cycle. |
 
 The `Manual` option is the key escape hatch for framework-less projects: cycle runs, Verifier does its 6 static checks, then the final report says "please verify these N files yourself" — no false-positive failures from missing dynamic checks. Pair it with `interactive` mode when your project's verification story is a browser tab and a manual eye, not a CI suite.
 

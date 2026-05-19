@@ -68,14 +68,26 @@ The file is local runtime state (gitignored). Main's archive step deletes it on 
   ```
   Also append the directory to the parent `.gitignore` if it is not already covered by an existing pattern.
 
-### 4. Final report
+### 4. Verification promotion candidates (optional)
+
+Read `state.json`. If `verification_ephemeral` is non-empty AND any of those ephemeral checks ran and **passed** in `verifier_result.dynamic_checks`, suggest promoting them to the persistent yaml.
+
+For each ephemeral check that passed:
+- Skip if its `cmd` still contains `<FILL:` (placeholder never executed cleanly).
+- Skip if its `id` is already present in `.harness/verification-checks.yaml`.
+- Otherwise emit a promotion candidate.
+
+The candidate is a suggestion, not an action. Main surfaces it in the final report; the user decides on the next cycle (or the user can promote manually). Do NOT modify `verification-checks.yaml` here — that file is touched by `/harness-iterate`'s candidate picker only.
+
+### 5. Final report
 
 ```
-review:       <N findings (severity breakdown)>
-security:     <N issues>
-post_finish:  <commands run, files changed>
-repo_reg:     proposed | applied | none
-overall:      complete | needs_user_input
+review:                       <N findings (severity breakdown)>
+security:                     <N issues>
+post_finish:                  <commands run, files changed>
+repo_reg:                     proposed | applied | none
+verification_promotion:       [ephemeral checks that passed and could be persisted — list of ids, or empty]
+overall:                      complete | needs_user_input
 ```
 
 ## Guardrails
