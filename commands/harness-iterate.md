@@ -80,6 +80,8 @@ All persistent state lives in the host project's `.harness/` directory.
 
 `attempt_history` accumulates one entry per **failed** re-plan attempt within this cycle. On Verifier or Executor failure within retry budget, the current attempt's snapshot (designer spec, completed workers, verifier result, single-line failure reason) is pushed before `active_workers`/`completed_workers` are cleared for the next re-plan. The successful (final) attempt is reflected in the live `completed_workers` + `verifier_result` fields and is **not** duplicated into `attempt_history`. This array is the cycle's failure trail; it is the data `/harness-replay` renders as the per-attempt timeline.
 
+**Compression rule.** To bound `state.json` size on cycles that retry many times, middle entries in `attempt_history` are compressed at push time: only the first entry and the most recent entry stay rich (with `designer_spec`, `completed_workers`, `verifier_result`); everything between is reduced to `{attempt, failure_reason}` alone. See §6 for the mechanics. The rule is: first attempt and the last (current) attempt are always full; older entries between them are compressed. `/harness-replay` renders compressed entries with a `(compressed)` marker — sufficient for "what failed and why" overview, while preserving the first-failure context and the most-recent-failure context in full.
+
 `verification_spec` is the list of check IDs Verifier will execute in its dynamic phase. Each entry is either:
 - a string id referring to an entry in `.harness/verification-checks.yaml`, or
 - the sentinel `"manual"` (when user opted to verify themselves; Verifier skips dynamic phase entirely).
@@ -323,7 +325,7 @@ When an executor or the verifier reports failure:
 
 1. Increment `retry_count`.
 2. If `retry_count > retry_limit` (default 5):
-   - First push the latest failure into `attempt_history` (same shape as step 3.1) — the limit-exceeding attempt must be captured before termination.
+   - First push the latest failure into `attempt_history` using the same push helper as step 3.1 (which also compresses the prior last entry — see §6-push-attempt). The limit-exceeding attempt must be captured before termination.
    - Set `phase: "needs_user"`, `termination_reason: "retry_limit"`.
    - **Archive (see §8)** so `attempt_history` is preserved for `/harness-replay`.
    - Report to user the full retry history (each cycle's designer plan and what failed; pull this from `attempt_history` rather than relying on context, since the archive is now authoritative). Present options:
@@ -332,19 +334,35 @@ When an executor or the verifier reports failure:
      3. Discard the work (revert).
    - Do NOT call ScheduleWakeup.
 3. Else, snapshot the failed attempt then re-plan:
-   1. **Push to `attempt_history`** (BEFORE clearing anything):
-      ```json
-      {
-        "attempt": <current retry_count, pre-increment value — so the first failure is attempt 1>,
-        "designer_spec": <last entry in designer_history>,
-        "completed_workers": <current completed_workers array>,
-        "verifier_result": <current verifier_result, may be null if executor failed first>,
-        "failure_reason": "<single-line summary: verifier mismatch / dynamic_check id / executor error>"
-      }
-      ```
+   1. **Push to `attempt_history`** using the helper in §6-push-attempt (BEFORE clearing anything). The new entry is full; the previous last entry, if it was full, gets compressed at this moment.
    2. Clear `active_workers` (cancel any survivors with `TaskStop`).
    3. **Preserve `completed_workers`** so Designer knows which work has already landed on disk and does not re-plan it.
    4. Move to `phase: "designing"`. Designer will be invoked with the failure report **plus the list of completed workers** so it can re-plan only what is missing.
+
+### §6-push-attempt: bounded-size attempt_history push helper
+
+Both push sites above use this procedure:
+
+1. Build the **new full entry**:
+   ```json
+   {
+     "attempt": <current retry_count, pre-increment value — so the first failure is attempt 1>,
+     "designer_spec": <last entry in designer_history>,
+     "completed_workers": <current completed_workers array>,
+     "verifier_result": <current verifier_result, may be null if executor failed first>,
+     "failure_reason": "<single-line summary: verifier mismatch / dynamic_check id / executor error>"
+   }
+   ```
+2. **Compress the previous last entry, if any.** If `attempt_history` already contains 2 or more entries, the entry currently at `attempt_history[-1]` is about to become a middle entry. Replace it in place with its compressed form:
+   ```json
+   { "attempt": <its attempt number>, "failure_reason": <its failure_reason> }
+   ```
+   Drop the `designer_spec`, `completed_workers`, `verifier_result` fields entirely. (If `attempt_history` has 0 or 1 entries, skip compression — the first entry must always stay full.)
+3. Append the new full entry to `attempt_history`.
+
+Result: after every push, `attempt_history` has the shape `[first_full, mid_compressed, mid_compressed, ..., last_full]`. On the first failure, just `[first_full]`. On the second, `[first_full, second_full]` (no compression possible yet). From the third onward, compression kicks in.
+
+This is idempotent and stable under restart: re-reading `state.json` mid-cycle and resuming pushes uses the same logic; entries already compressed stay compressed (their `designer_spec` etc. are already missing, so the compression step is a no-op on them).
 
 ---
 

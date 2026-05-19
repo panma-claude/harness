@@ -42,7 +42,15 @@ Verdict:    <complete | needs_user>  (<termination_reason>)
       → completed_workers: <N changes>
       → verifier_result: <pass | fail · failed checks>
       → failure_reason: <single line>
-    Attempt <n+1>: ...
+    Attempt <n+1>: (compressed)
+      → failure_reason: <single line>
+    Attempt <n+2>: ...
+
+  Compressed entries (`designer_spec`, `completed_workers`, `verifier_result`
+  fields absent) come from the middle of long retry sequences — see
+  harness-iterate.md §6-push-attempt for the bounding rule. Render them
+  with the "(compressed)" marker and only the `failure_reason` line; the
+  first attempt and the most-recent attempt are always rendered in full.
 
 ▸ Final executor results
     <executor>   <status>   <N files>   <elapsed>
