@@ -272,16 +272,69 @@ The picker is **not** a phase. It's a sub-step of designing that runs once per c
 ### Phase: `finalizing`
 
 1. Dispatch the **rule-applier** subagent (foreground Task).
-   - Input: final cycle diff + `verifier_result` + `verification_ephemeral` (so it can suggest promotions).
+   - Input: final cycle diff + `verifier_result` + `verification_ephemeral` (so it can suggest promotions) + the project's auto-memory directory path if your context shows one (Main has it via the auto-memory system reminder; pass the absolute `memory/` dir path and the absolute `MEMORY.md` path so Rule-Applier can de-dup against existing memories). Omit these inputs if auto-memory is not wired in this session.
 2. Rule-Applier returns its report. Store in `rule_applier_result`.
 3. If the report contains `overall: needs_user_input` (e.g., proposed repo registrations):
    - Present the proposals to the user (verbatim).
    - On user confirmation: re-invoke rule-applier with `confirmed_registrations: [...]`.
    - On user rejection: skip those registrations, mark them dismissed.
 4. If `rule_applier_result.verification_promotion` is non-empty, include a short suggestion section in the final summary listing those ids and a note: "다음 cycle 의 candidate picker 에서 동일 항목을 'yaml 영구 등록' 으로 선택하면 자동 추가됩니다." Do not prompt now — surfacing once is enough.
-5. Move to `phase: "complete"`.
-6. Report final summary to user (designer plan, worker results, verifier, rule-applier, verification promotion suggestions if any).
-7. **If `verification_spec` was `["manual"]`**, append a "Please verify" block to the final summary:
+5. **Handle memory candidates** (§4-memory-candidates) if `rule_applier_result.memory_candidates` is non-empty. Run regardless of `mode:` in preferences.yaml (memory write is consequential enough to confirm, but bounded to 1 prompt — the trigger gates already ensure most cycles emit zero candidates).
+6. Move to `phase: "complete"`.
+7. Report final summary to user (designer plan, worker results, verifier, rule-applier, verification promotion suggestions, memory write result if any).
+
+### §4-memory-candidates: handle proposed memory writes
+
+The candidate is shaped `{slug, type, title, body, why, how_to_apply}`. For each (typically 1 max):
+
+1. **Check auto-memory is wired in this session.** Look at your own system context for an auto-memory directory path. If absent, skip the prompt; instead emit a single advisory line in the final summary: `Memory candidate '<slug>' suggested — auto-memory not configured for this project, save manually if desired.` Include the candidate body in the advisory so the user can copy it.
+
+2. **Prompt the user via AskUserQuestion** (one question per candidate, single-select):
+   - `question`: `"Lesson 발견: <title>\n  Body: <body>\n  Why: <why>\n  How to apply: <how_to_apply>\n  메모리에 저장할까요? (slug: <slug>, type: <type>)"`
+   - `header`: `"메모리 후보"` (≤12 chars)
+   - `multiSelect`: false
+   - `options`:
+     - `{ label: "Yes, 저장", description: "<auto-memory-dir>/<slug>.md 작성 + MEMORY.md 에 한 줄 추가." }`
+     - `{ label: "Skip", description: "이번에는 저장하지 않음. 후속 cycle 에서 다시 제안될 수 있음." }`
+     - `{ label: "Show path, I'll edit", description: "메모리 경로만 출력. 내가 직접 작성." }`
+
+3. **Apply the answer:**
+
+   - **Yes, 저장:**
+     1. Write `<auto-memory-dir>/<slug>.md` with the frontmatter format dictated by Claude Code's auto-memory system:
+        ```markdown
+        ---
+        name: <slug>
+        description: <title>
+        metadata:
+          type: <type>
+        ---
+
+        <body>
+
+        **Why:** <why>
+
+        **How to apply:** <how_to_apply>
+        ```
+        Refuse to overwrite an existing file with the same slug — if it exists, fall through to "Show path" path with a note.
+     2. Append a one-line index entry to `<MEMORY.md>`:
+        `- [<title>](<slug>.md) — <one-line hook derived from body>`
+     3. Record in `rule_applier_result.memory_write: {status: "saved", slug, path}`.
+
+   - **Skip:**
+     - Record in `rule_applier_result.memory_write: {status: "skipped", slug}`. Do nothing else.
+
+   - **Show path, I'll edit:**
+     - Print the proposed file path (`<auto-memory-dir>/<slug>.md`) and the full frontmatter+body as a code block in the final summary. User saves it themselves.
+     - Record `{status: "deferred_to_user", slug, path}`.
+
+4. **Idempotency.** If `rule_applier_result.memory_write` is already set (e.g., re-entering finalizing after partial completion), skip this step entirely.
+
+---
+
+Resuming the main finalizing flow after §4-memory-candidates:
+
+8. **If `verification_spec` was `["manual"]`**, append a "Please verify" block to the final summary:
    ```
    Verification deferred to you.
    Changed files (N):
@@ -290,9 +343,9 @@ The picker is **not** a phase. It's a sub-step of designing that runs once per c
      ...
    Please verify manually (browser, smoke command, whatever fits) and let me know if anything looks wrong.
    ```
-8. Set `phase: "complete"`, `termination_reason: "success"`.
-9. **Archive (see §8)** — ships the cycle to `.harness/history/` and deletes `state.json`.
-10. Do NOT call ScheduleWakeup. The Ralph loop exits.
+9. Set `phase: "complete"`, `termination_reason: "success"`.
+10. **Archive (see §8)** — ships the cycle to `.harness/history/` and deletes `state.json`.
+11. Do NOT call ScheduleWakeup. The Ralph loop exits.
 
 ### Phase: `complete` / `needs_user`
 

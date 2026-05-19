@@ -79,7 +79,38 @@ For each ephemeral check that passed:
 
 The candidate is a suggestion, not an action. Main surfaces it in the final report; the user decides on the next cycle (or the user can promote manually). Do NOT modify `verification-checks.yaml` here — that file is touched by `/harness-iterate`'s candidate picker only.
 
-### 5. Final report
+### 5. Memory candidates (optional)
+
+After verification promotion, look for **lessons worth saving to the user's auto-memory**. This is purely advisory — you only propose; Main asks the user and writes the file.
+
+**Trigger gate.** Only emit memory candidates when at least one of these signal a noteworthy cycle (otherwise this section produces noise on routine cycles):
+
+- `state.json.retry_count > 0` — the cycle had to re-plan at least once. The failure pattern in `attempt_history` is the lesson.
+- `review` findings contain at least one HIGH or MEDIUM severity item that names a recurring concern (not a one-off).
+- `security` findings contain any item (security issues almost always represent a transferable lesson).
+
+If none of these hold, emit `memory_candidates: []` and move on.
+
+**Drafting the candidate.** Inspect `attempt_history` failure_reasons + the final review/security findings. Look for a single transferable rule a future Claude session would benefit from. Be conservative — at most **1** candidate per cycle. More than 1 quickly becomes noise the user dismisses.
+
+Each candidate has shape:
+
+```json
+{
+  "slug": "<short-kebab-case-id>",
+  "type": "feedback | project | reference",
+  "title": "<short imperative summary>",
+  "body": "<the rule itself — one or two sentences>",
+  "why": "<one-line reason this rule exists, often referencing the cycle's failure>",
+  "how_to_apply": "<one-line on when/where this applies in future work>"
+}
+```
+
+Choose `type` per the auto-memory taxonomy: `feedback` for "the user wants X" rules, `project` for "what's happening in this codebase" facts, `reference` for pointers to external systems. Do not emit `user` type candidates (those should come from explicit user statements, not cycle inference).
+
+**De-duplicate against existing memory.** Read the project's `MEMORY.md` if it exists (Main provides the path in the invocation if auto-memory is wired; if absent, skip de-dup). If the proposed slug or title closely matches an existing entry, do NOT emit it — surface a note instead: `memory_already_covered: ["<existing-slug>"]`.
+
+### 6. Final report
 
 ```
 review:                       <N findings (severity breakdown)>
@@ -87,6 +118,8 @@ security:                     <N issues>
 post_finish:                  <commands run, files changed>
 repo_reg:                     proposed | applied | none
 verification_promotion:       [ephemeral checks that passed and could be persisted — list of ids, or empty]
+memory_candidates:            [{slug, type, title, body, why, how_to_apply}, ...] (0 or 1)
+memory_already_covered:       [<existing-slug>, ...]                              (when de-dup hit)
 overall:                      complete | needs_user_input
 ```
 
