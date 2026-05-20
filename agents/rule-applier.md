@@ -110,18 +110,79 @@ Choose `type` per the auto-memory taxonomy: `feedback` for "the user wants X" ru
 
 **De-duplicate against existing memory.** Read the project's `MEMORY.md` if it exists (Main provides the path in the invocation if auto-memory is wired; if absent, skip de-dup). If the proposed slug or title closely matches an existing entry, do NOT emit it — surface a note instead: `memory_already_covered: ["<existing-slug>"]`.
 
-### 6. Final report
+### 6. Final report (JSON only)
 
+Return a **single JSON object** as your last output. No markdown headers, no narrative wrapping the object. If you want to add free-form prose, put it in the `notes` field — Main shows that field verbatim in the cycle summary but does NOT parse it.
+
+Schema (all top-level keys required; use `[]` / `null` / `""` for empty values):
+
+```json
+{
+  "review": {
+    "findings": [
+      {
+        "severity": "high|medium|low",
+        "category": "<short tag>",
+        "file": "<path>",
+        "summary": "<one-line>"
+      }
+    ]
+  },
+  "security": {
+    "findings": [
+      {
+        "severity": "high|medium|low",
+        "cwe": "<CWE-id or empty>",
+        "file": "<path>",
+        "summary": "<one-line>"
+      }
+    ]
+  },
+  "post_finish": {
+    "applied": [
+      { "rule": "<rule-name>", "files_changed": 0, "result": "applied|skipped|needs_user_input" }
+    ],
+    "needs_user_input_reason": "<empty if all applied>"
+  },
+  "repo_reg": {
+    "status": "none|proposed|applied",
+    "proposed": [
+      { "dir": "<path>", "org": "<org>", "name": "<repo-name>", "private": true }
+    ]
+  },
+  "verification_promotion": [
+    "<ephemeral-check-id-that-passed>"
+  ],
+  "memory_candidates": [
+    {
+      "slug": "<kebab-case>",
+      "type": "feedback|project|reference",
+      "title": "<short imperative>",
+      "body": "<1-2 sentences>",
+      "why": "<one line>",
+      "how_to_apply": "<one line>"
+    }
+  ],
+  "memory_already_covered": ["<existing-slug>"],
+  "overall": "complete|needs_user_input",
+  "notes": "<optional markdown narrative — Main displays only, does not parse>"
+}
 ```
-review:                       <N findings (severity breakdown)>
-security:                     <N issues>
-post_finish:                  <commands run, files changed>
-repo_reg:                     proposed | applied | none
-verification_promotion:       [ephemeral checks that passed and could be persisted — list of ids, or empty]
-memory_candidates:            [{slug, type, title, body, why, how_to_apply}, ...] (0 or 1)
-memory_already_covered:       [<existing-slug>, ...]                              (when de-dup hit)
-overall:                      complete | needs_user_input
-```
+
+Wrap the object in a single ` ```json` fenced code block, OR emit it as the last raw JSON in your response. Either is fine; Main extracts the last fenced `json` block first, then falls back to "the last `{...}` substring that parses". Do not emit two JSON blocks.
+
+**Required fields** (each must be present, even when empty):
+- `review.findings` — `[]` if no findings
+- `security.findings` — `[]` if no findings
+- `post_finish.applied` — `[]` if no rules ran; `post_finish.needs_user_input_reason` is `""` when not blocked
+- `repo_reg.status` — `"none"` is valid
+- `verification_promotion` — `[]` is valid
+- `memory_candidates` — `[]` is valid (most cycles)
+- `memory_already_covered` — `[]` when no de-dup hit
+- `overall` — one of the two enum values
+- `notes` — `""` is valid
+
+Schema violation (missing key, wrong type, JSON parse failure) causes Main to re-invoke you once with the error spelled out. A second violation in the same cycle leads to Main storing your raw response and ending the cycle as `needs_user`. Be strict the first time.
 
 ## Guardrails
 

@@ -45,3 +45,26 @@ mode: auto
 post_finish:
   file_threshold: 100   # changed files in a single deterministic rule
   repo_threshold: 20    # nested repos touched in a single deterministic rule
+
+# Optional — what to do when the working tree (umbrella + nested repos) has
+# uncommitted changes at the moment a cycle starts.
+#
+# Why this matters: on polyrepo / nested-clones umbrellas, `commit-nested.sh`
+# does `git add -A` per nested repo, so any stale changes left in the working
+# tree at cycle start would get folded into the cycle's commit message. The
+# blame / revert trail then mixes "cycle work" with "stuff that was already
+# there." This check surfaces the situation before the cycle runs.
+#
+# Policies:
+#   warn   — print a list of dirty repos/files at cycle start, then continue
+#            (default). The user sees what is about to get bundled in.
+#   block  — refuse to start; archive with termination_reason
+#            "dirty_working_tree". User must commit/stash/discard the stale
+#            changes manually, then re-trigger.
+#   ignore — do not check. Use when you regularly have intentional dirty
+#            state at cycle start (rare).
+#
+# Defaults (when this block is omitted): policy=warn.
+cycle_start:
+  dirty_check:
+    policy: warn

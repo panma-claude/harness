@@ -67,7 +67,40 @@ Then for each entry in the union:
 3. **Placeholder check.** If the resolved `cmd` contains the marker `<FILL:`, do NOT execute. Record `status: skipped`, reason "cmd is placeholder — fill before use". The user knowingly persisted this; the skip is the signal to go fill it in.
 4. Else: execute `cmd` in the entry's `cwd` (default project root) with the `timeout` (default 300s).
 5. Record `status: pass | fail | timeout`, `duration` (seconds), and the last ~20 lines of output (or a summary if huge).
-6. Mark inline-source entries with `source: "ephemeral"` in the per-check report so Rule-Applier and Main can identify them.
+6. **For `fail` or `timeout` results, classify the failure** (see §classification below) — set `failure_class` + `reasoning` on the report entry. Main uses these to branch in failure handling (don't burn a retry on a spec bug).
+7. Mark inline-source entries with `source: "ephemeral"` in the per-check report so Rule-Applier and Main can identify them.
+
+### §classification — failure_class for failed dynamic checks
+
+Every failed dynamic check (status `fail` or `timeout`) must carry one of these four classes. Walk this decision tree in order; first match wins:
+
+| failure_class | When to assign | Cheap signal |
+|---|---|---|
+| `infra_unavailable` | the check could not start at all because the runtime environment is missing | stderr matches `command not found` / `docker: Cannot connect` / `ECONNREFUSED` / `No such host` / `permission denied` on socket |
+| `spec_definition` | the check's own `cmd` is wrong — refers to a path or option that doesn't exist in the working tree, OR has always failed (never passed in archive history) without the cycle touching its referenced area | first-token `command -v` ok, BUT a `-f`/`--file`/positional path arg in `cmd` does not exist; OR file references in `cmd` are not in this cycle's `git diff --name-only` and the archive shows the check has never passed |
+| `timeout` | exit was a wall-clock kill | exit code 124, SIGKILL, or duration ≥ `timeout` |
+| `cycle_defect` | default — the check ran end-to-end and something this cycle changed broke it | none of the above; the cycle's diff overlaps with the area the check covers |
+
+For `timeout`, also note: timeout is a one-time retry candidate at the Main level (§6 in `harness-iterate`). If the same check times out again in the same cycle, Main upgrades it to `cycle_defect`.
+
+Add a short free-form `reasoning` (≤2 lines) that points at the cheap signal you used. Don't speculate beyond the signal.
+
+Per-entry report shape with the new fields:
+
+```yaml
+- id: <check-id>
+  source: library | ephemeral
+  status: fail
+  duration: <seconds>
+  exit_code: <int>           # optional but include when known
+  output: |
+    <last ~20 lines>
+  failure_class: spec_definition | cycle_defect | infra_unavailable | timeout
+  reasoning: |
+    <≤2 lines on which signal matched>
+```
+
+Successful (`pass`) and `skipped` entries do NOT carry `failure_class` — omit the field.
 
 Do **not** run anything not listed in either source. The cycle's selection is authoritative.
 
@@ -91,13 +124,15 @@ mismatches:
     detail:   <one-line description>
   - ...
 dynamic_checks:
-  - id:       <check id>
-    source:   library | ephemeral
-    status:   pass | fail | timeout | skipped
-    duration: <seconds>
-    output:   |
+  - id:            <check id>
+    source:        library | ephemeral
+    status:        pass | fail | timeout | skipped
+    duration:      <seconds>
+    output:        |
       <last ~20 lines, or a brief summary if too large>
-    reason:   <only when skipped>
+    reason:        <only when skipped>
+    failure_class: <only when status=fail or timeout — see §classification>
+    reasoning:     <only when failure_class is set — ≤2 lines>
   - ...
 notes: <free-form 0-3 lines>
 ```

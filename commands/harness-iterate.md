@@ -14,6 +14,7 @@ You are now the **supervisor (Main)** of the panma-harness multi-agent cycle. Fo
 - If `.harness/state.json` exists but its `phase` is `complete` or `needs_user` (i.e., a stale archive from a previous cycle that wasn't cleaned up — should not normally happen because termination archives + deletes, see §8): archive it to `.harness/history/` as if terminating now (append to `INDEX.json`, write `<id>-<verdict>.json`), then delete it. Treat this as the "state.json does not exist" branch below.
 - If `.harness/state.json` does not exist, initialize a new cycle from `$ARGUMENTS`:
   - Strip any leading `--verification=<pick>` flag and capture the value (see below); the rest of `$ARGUMENTS` becomes `user_request` verbatim.
+  - **Run §pre-cycle-dirty-check** (see below). It may warn-and-continue, block (terminate before init), or be skipped per preferences.
   - Write `state.json` with `phase: "designing"`, `cycle_id: 1`, `retry_count: 0`, `retry_limit: 5`, `attempt_history: []`.
   - Set `verification_spec` based on the captured flag:
     - `--verification=auto` (or no flag) → `[]` (Designer will pick later)
@@ -22,6 +23,45 @@ You are now the **supervisor (Main)** of the panma-harness multi-agent cycle. Fo
     - `--verification=<id-1>,<id-2>` → `["<id-1>", "<id-2>"]`; Designer will use this as-is and not re-pick
   - Then proceed into the designing phase.
 - Otherwise, read `state.json` and act on the current phase per §4.
+
+### §pre-cycle-dirty-check
+
+Surfaces uncommitted changes that would otherwise get bundled into the cycle's commit by `hooks/commit-nested.sh` on polyrepo umbrellas. Runs only when `.harness/state.json` does NOT yet exist (cycle is about to start fresh).
+
+1. **Read policy.** Default `warn`. If `.harness/preferences.yaml` exists and has `cycle_start.dirty_check.policy`, use that value. `ignore` → return immediately (no check).
+2. **Discover repos to scan:**
+   - Always include the umbrella root.
+   - If `find . -mindepth 2 -maxdepth 3 -name .git -type d` returns 1+ results, add each as a nested repo (matches commit-nested.sh discovery — keep it identical).
+3. **Check each repo:** `git -C <repo> status --porcelain` — if non-empty, record `{repo, dirty_lines}` (the porcelain lines, capped at 10 per repo for display).
+4. **Act on policy:**
+   - **warn (default):** if any dirty entries, print ONE block to the user before initializing state, in this shape:
+
+     ```
+     ⚠  Dirty working tree at cycle start (policy: warn). The next cycle's
+        commit-nested step would bundle these stale changes into its commit.
+
+        <repo-path-1>:
+          <up to 10 porcelain lines>
+        <repo-path-2>:
+          ...
+
+        Continuing with the cycle. Set cycle_start.dirty_check.policy: block
+        in .harness/preferences.yaml to refuse start instead.
+     ```
+
+     Then proceed (write state.json, start designing).
+   - **block:** if any dirty entries, do NOT initialize state.json. Print the same dirty-repo block, but with the trailer:
+
+     ```
+        Refusing to start (policy: block). Commit / stash / discard the
+        changes above and re-trigger the request.
+     ```
+
+     End the iteration. Do NOT call ScheduleWakeup. (Nothing to archive — state.json never got written.)
+   - **ignore:** no-op (already returned in step 1).
+5. **Cwd safety.** This check runs from the umbrella root. Restore CWD when done; commit-nested.sh has its own root-resolution and is not affected, but Main should not leak a CWD change to subsequent steps.
+
+This check is intentionally minimal — it does NOT diff baselines or try to separate "stale" from "cycle-introduced" changes. That's a future enhancement; for now `warn` puts the user on notice and `block` keeps strict projects safe.
 
 ---
 
@@ -95,7 +135,7 @@ It is set in one of three ways:
 
 `verification_user_skip` (optional bool) — when true, both Designer and Verifier treat the empty `verification_spec` as "user said skip", not "no checks defined".
 
-`termination_reason` is one of: `null`, `"success"`, `"user_stop"`, `"retry_limit"`, `"designer_escalation"`, `"error"`.
+`termination_reason` is one of: `null`, `"success"`, `"user_stop"`, `"retry_limit"`, `"designer_escalation"`, `"verification_spec_definition"`, `"verification_infra_unavailable"`, `"error"`. The two `verification_*` reasons come from §6-classify: the cycle paused not because its work was wrong, but because the project's verification spec or environment is.
 
 ### `.harness/STOP` (kill switch)
 
@@ -235,12 +275,32 @@ Steps:
 
    - **"skip"**: do nothing.
 
-5. **Validate `<FILL: ...>` placeholders.** Before persisting/executing, scan each chosen candidate's `cmd` for the pattern `<FILL:`. If found:
+5. **cmd sanity check.** Before persisting/executing any candidate the user picked ("이번만 실행" or "yaml 영구 등록"), run a cheap existence pass on the `cmd`:
+
+   - First token (the executable): `command -v <token>` — must be on PATH, OR the token is a relative/absolute path and `test -x <token>` passes. Bash builtins (`cd`, `set`, `echo`, `[`, etc.) are auto-pass.
+   - Arguments to `-f` / `--file` / `--config` / `-c` flags that look like paths (contain `/` or end in `.yml|.yaml|.json|.sh|.toml|.conf`) — `test -f <path>` relative to the candidate's `cwd` (default project root).
+   - Any standalone word ending in `.sh|.yml|.yaml|.json|.toml|.conf` and not preceded by a flag — same `test -f`.
+
+   For candidates with `<FILL:` placeholders in the cmd, **skip sanity** (step 6 handles those separately).
+
+   If anything fails, surface ONE follow-up `AskUserQuestion` per candidate:
+
+   - `question`: `"<id> cmd sanity: <one-line: which token/path is missing>. 등록할까요?"`
+   - options:
+     - `{ label: "그래도 등록", description: "cmd 를 그대로 저장/실행. 실제 fail 이면 Verifier 가 spec_definition 으로 잡음." }` (recommended for "yaml 영구 등록" — user may know better)
+     - `{ label: "이번 cycle 만 스킵", description: "이 후보는 이번 사이클에서 빼고 진행." }`
+     - `{ label: "Cancel cycle", description: "cycle 자체 중단. spec 을 직접 손보고 다시 트리거." }`
+
+   On "Cancel cycle": archive immediately with `termination_reason: "verification_spec_definition"` (same code path as §6-classify). On "이번만 스킵": drop this candidate's apply, continue with the rest. On "그래도 등록": proceed.
+
+   This is best-effort. Many real-world cmds (heredocs, env-var paths, dynamically resolved targets) cannot be statically validated — when in doubt, do NOT flag; let Verifier catch the real fail at runtime and classify via failure_class.
+
+6. **Validate `<FILL: ...>` placeholders.** Before persisting/executing, scan each chosen candidate's `cmd` for the pattern `<FILL:`. If found:
    - If user chose **"이번만 실행"** or **"yaml 영구 등록"**, surface a single-line warning to the user (`AskUserQuestion` follow-up with one question: "<id>: cmd 가 placeholder 입니다. 직접 채우러 가시겠습니까?" with options `[Yes, 채우러 가기 — yaml 열기 / Just skip this cycle / Persist as-is]`). The Yes path opens the yaml in the user's editor (best-effort — just print the path; user opens it).
    - On `"Just skip"`, undo the apply for this candidate.
    - On `"Persist as-is"`, keep the placeholder. Verifier will skip the check at runtime (placeholder cmd does not execute).
 
-6. **Update state.json.** Persist the new `verification_spec`, `verification_ephemeral`, and (if any) the on-disk yaml change. Proceed to step 6 of the parent flow (move to executing).
+7. **Update state.json.** Persist the new `verification_spec`, `verification_ephemeral`, and (if any) the on-disk yaml change. Proceed to step 6 of the parent flow (move to executing).
 
 The picker is **not** a phase. It's a sub-step of designing that runs once per cycle, synchronously, before executors dispatch.
 
@@ -273,7 +333,7 @@ The picker is **not** a phase. It's a sub-step of designing that runs once per c
 
 1. Dispatch the **rule-applier** subagent (foreground Task).
    - Input: final cycle diff + `verifier_result` + `verification_ephemeral` (so it can suggest promotions) + the project's auto-memory directory path if your context shows one (Main has it via the auto-memory system reminder; pass the absolute `memory/` dir path and the absolute `MEMORY.md` path so Rule-Applier can de-dup against existing memories). Omit these inputs if auto-memory is not wired in this session.
-2. Rule-Applier returns its report. Store in `rule_applier_result`.
+2. **Parse the response as JSON** (see §4-rule-applier-parse). Store the parsed object in `rule_applier_result`. On unrecoverable parse failure: terminate as `needs_user` with raw response preserved (handled inside §4-rule-applier-parse).
 3. If the report contains `overall: needs_user_input` (e.g., proposed repo registrations):
    - Present the proposals to the user (verbatim).
    - On user confirmation: re-invoke rule-applier with `confirmed_registrations: [...]`.
@@ -282,6 +342,28 @@ The picker is **not** a phase. It's a sub-step of designing that runs once per c
 5. **Handle memory candidates** (§4-memory-candidates) if `rule_applier_result.memory_candidates` is non-empty. Run regardless of `mode:` in preferences.yaml (memory write is consequential enough to confirm, but bounded to 1 prompt — the trigger gates already ensure most cycles emit zero candidates).
 6. Move to `phase: "complete"`.
 7. Report final summary to user (designer plan, worker results, verifier, rule-applier, verification promotion suggestions, memory write result if any).
+
+### §4-rule-applier-parse: extract and validate the JSON report
+
+Rule-Applier's response is contracted to a single JSON object (see `agents/rule-applier.md` §6). Main's job here is to extract it deterministically and bounce a malformed response back exactly once.
+
+1. **Extract.** Scan Rule-Applier's response in this order:
+   - Last ` ```json ... ``` ` fenced block — preferred.
+   - Last balanced `{...}` substring at any depth that parses as JSON — fallback.
+   - Nothing parses → go to step 3 with reason `"no_json_object_found"`.
+
+2. **Validate required keys.** The parsed object must contain top-level keys `review`, `security`, `post_finish`, `repo_reg`, `verification_promotion`, `memory_candidates`, `memory_already_covered`, `overall`, `notes`. Types per the schema. Any missing key or wrong type → go to step 3 with reason `"schema:<which-key>:<problem>"`.
+
+3. **One retry.** If step 1 or 2 fails AND no retry has been issued yet this cycle:
+   - Re-invoke rule-applier as a foreground Task with the original inputs **plus** a one-line correction prompt: `"Previous response violated the contract: <reason>. Return exactly one JSON object matching §6 of agents/rule-applier.md. No markdown narrative outside the notes field."`
+   - Parse the new response with the same procedure (back to step 1). One retry only.
+
+4. **Give up if still bad.** If the retry response also fails to parse:
+   - Save the raw response to `.harness/rule-applier-raw-<cycle_id>.txt`.
+   - Store a stub in `rule_applier_result`: `{ "overall": "needs_user_input", "notes": "rule-applier schema violation — raw response saved", "raw_path": "<path>", "parse_error": "<reason>" }`.
+   - Set `phase: "needs_user"`, `termination_reason: "error"`. Skip the rest of finalizing. **Archive (see §8)** then report to the user with the raw path so they can inspect.
+
+5. **Success.** The parsed JSON object **is** `rule_applier_result`. Subsequent finalizing steps (verification promotion suggestions, memory candidates, summary report) all read from this object.
 
 ### §4-memory-candidates: handle proposed memory writes
 
@@ -376,6 +458,29 @@ Be liberal with patience but decisive on clear failure signals. The LLM judgment
 
 When an executor or the verifier reports failure:
 
+### §6-classify: Verifier dynamic_check failure routing (run BEFORE the generic retry path below)
+
+If this failure came from Verifier and **all** failing entries in `verifier_result.dynamic_checks` are dynamic-check failures (`status: fail | timeout`) that carry a `failure_class`, route by class before touching `retry_count`. If the failure mixes static `mismatches` with dynamic failures, OR any dynamic failure lacks `failure_class`, fall through to the generic path (step 1 below).
+
+For each failed dynamic check in `verifier_result.dynamic_checks`:
+
+- **`cycle_defect`** — normal failure. Falls through to the generic retry path (step 1 below). retry_count is incremented; Designer re-plans.
+- **`spec_definition`** — the check itself is wrong, this cycle's code is not necessarily broken. **Do NOT increment `retry_count`.** Set `phase: "needs_user"`, `termination_reason: "verification_spec_definition"`. **Archive (see §8)**. Report to the user with:
+  - The check id and its `reasoning` from Verifier.
+  - The exact cmd that failed and (where deducible) which referenced file/path is missing.
+  - A suggested fix (e.g., "cmd references `infra/docker-compose.yml`; the file at this path is `infra/docker-compose-nginx.yml` — update the cmd in `.harness/verification-checks.yaml`?").
+  - Three options for the user: `Edit the spec, then re-run the cycle` / `Skip this check for this cycle (verification_user_skip)` / `Cancel`.
+
+  Same check classified `spec_definition` twice within the same cycle (Verifier ran the same id twice and both times the class came back `spec_definition`) → escalate to `needs_user_input` immediately even if the user previously chose "Edit then re-run".
+- **`infra_unavailable`** — environment is broken; not something Designer can fix by re-planning. **Do NOT increment `retry_count`.** Set `phase: "needs_user"`, `termination_reason: "verification_infra_unavailable"`. **Archive**. Report to the user with the check id, `reasoning`, and a short hint (e.g., "docker daemon not reachable — start docker?"). Options: `I fixed it, re-run` / `Skip this check` / `Cancel`.
+- **`timeout`** — if this is the first timeout of this id in this cycle (check `attempt_history` for prior occurrences), retry ONE time. Do NOT increment `retry_count`; instead, mark this as a no-cost retry. The same Designer plan re-runs. If this is the second timeout of the same id in the same cycle, **upgrade to `cycle_defect`** and fall through to the generic path.
+
+`spec_definition` and `infra_unavailable` produce a `needs_user` termination with no Designer re-plan. They consume zero retry budget, because the cycle's code may be perfectly fine — the issue is in the project's verification setup, not the cycle's work.
+
+Static `mismatches` are always `cycle_defect`-equivalent — they're directly attributable to the cycle's diff. Fall through to the generic path for those.
+
+### Generic retry path
+
 1. Increment `retry_count`.
 2. If `retry_count > retry_limit` (default 5):
    - First push the latest failure into `attempt_history` using the same push helper as step 3.1 (which also compresses the prior last entry — see §6-push-attempt). The limit-exceeding attempt must be captured before termination.
@@ -424,11 +529,36 @@ This is idempotent and stable under restart: re-reading `state.json` mid-cycle a
 The user can interrupt at any iteration. When that happens:
 
 - The user's new input arrives in the next turn.
-- Read it. Decide:
+- Read it. Decide which case applies:
   - **Sub-context refinement** (clarifying detail of current work): incorporate into the next Designer call (when next failure forces re-plan), or `TaskUpdate` to relevant active workers.
   - **Scope extension** (additional work, current work still valid): append a new spec into `pending_specs` so it is picked up in a later wave.
   - **Direction change** (current work is now wrong): `TaskStop` all active workers, reset `phase: "designing"`, reset `retry_count: 0` (this is a new request), invoke Designer afresh.
+  - **Verification reinforcement** (the cycle already reported a pass, but the user sees a defect the verification didn't catch): see §7-verification-reinforcement below.
 - There is no Relay agent — main absorbs user input directly.
+
+### §7-verification-reinforcement
+
+The cycle (or a recent one — including the one just archived) reported `pass`, but the user comes back saying "안 됐는데" / "확인했어?" / "왜 통과로 나오지?" / "재현돼" — i.e. **the dynamic checks that did pass were not sufficient to catch the actual defect**. This is its own case because it doesn't fit refinement (no new requirement), scope-extension (no new work), or direction-change (the approach was fine, just under-verified).
+
+Signals that this is the case (any one is enough):
+- A prior cycle's `verifier_result.status` was `pass` AND user reports defect in the same surface that cycle touched.
+- User describes a real-system observation (URL, browser, curl, log) that contradicts the cycle's pass verdict.
+- User explicitly mentions verification gap ("검증 누락" / "확인 안 됐어" / "그게 통과로 나올 리가").
+
+Main's response:
+
+1. **Ask the user how they observed the defect** — get the exact command / URL / steps so the new check is reproducible. One short `AskUserQuestion` is fine if the user did not already say.
+2. **Decide check scope.** Offer one `AskUserQuestion`:
+   - `{ label: "이번 cycle 만 실행", description: "verification-checks.yaml 미수정. 이 cycle 의 ephemeral check 로만 추가." }` (recommended for one-off site fixes)
+   - `{ label: "yaml 영구 등록", description: "verification-checks.yaml 에 append. 미래 cycle 에도 자동." }` (recommended for genuine verification gap)
+   - `{ label: "Cancel — 그냥 직접 확인할게", description: "추가 안 함, cycle 그대로 종료." }`
+3. **Push the new check.**
+   - "이번 cycle 만 실행": push `{id, cmd, applicable_when, timeout}` into the **current** cycle's `verification_ephemeral`. If the cycle is already terminated/archived, start a fresh cycle with the just-edited inputs as `user_request` ("verification reinforcement for last cycle: <original request>") and seed `verification_ephemeral` with the new check.
+   - "yaml 영구 등록": append to `.harness/verification-checks.yaml` under `checks:` (same flow as picker step 4) AND push the id into the current/next cycle's `verification_spec`.
+4. **Re-run.** If the original cycle is still live (phase ≠ complete), reset `phase: "verifying"` and let Verifier re-run with the augmented spec. If already archived, start a fresh cycle as in step 3.
+5. **retry_count: not incremented.** This is a verification gap, not a work failure. The retry budget is for code quality, not verification quality. Exception: if §7-verification-reinforcement fires **3 times within the same cycle**, terminate as `needs_user` with `termination_reason: "verification_gap_loop"` — three rounds of "your check missed it" in one cycle means the design itself is wrong; user needs to re-scope.
+
+Tie-in with `failure_class`: a `spec_definition` from §6-classify is the *cmd-level* version of this case (the check itself fails to run cleanly); §7-verification-reinforcement is the *spec-coverage* version (the check ran cleanly, passed, but missed the defect). Both consume zero retry budget for the same reason — neither indicates the cycle's code is wrong.
 
 ---
 
